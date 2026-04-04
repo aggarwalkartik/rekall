@@ -19,10 +19,12 @@ Rekall works in three layers.
 ```bash
 git clone https://github.com/aggarwalkartik/rekall
 cd rekall
-./setup.sh          # Unix/Mac
+bash setup.sh          # Unix/Mac
 # or
-.\setup.ps1         # Windows
+.\setup.ps1            # Windows
 ```
+
+**Requirements**: Python 3, Node.js (optional, for Obsidian MCP server).
 
 Then start a new Claude Code session. That's it.
 

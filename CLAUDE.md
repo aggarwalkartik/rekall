@@ -189,7 +189,7 @@ Only `user-explicit` patterns can reach 0.9. Observed patterns cap at 0.7 (after
 - Use next available `ins_NNN` id (check the last id in the file)
 
 ### Domain tags
-`design`, `business`, `finance`, `dev`, `personal`, `knowledge-management`, `general`
+`design`, `business`, `finance`, `dev`, `personal`, `knowledge-management`, `data-viz`, `email`, `job-search`, `general`
 
 ### Section names
 `Working Standards`, `User Preferences`, `General` (or create new sections as needed)

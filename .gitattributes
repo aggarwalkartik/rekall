@@ -1,0 +1,3 @@
+# Ensure scripts keep LF line endings
+*.sh text eol=lf
+*.py text eol=lf

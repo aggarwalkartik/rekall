@@ -4,55 +4,91 @@
 
 set -euo pipefail
 
-INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | python -c "import sys,json; print(json.load(sys.stdin).get('tool_name',''))" 2>/dev/null)
+# --- Load config ---
+CONFIG_FILE="$HOME/.claude/rekall.conf"
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE"
+fi
 
-if [ "$TOOL_NAME" = "Write" ]; then
-  CONTENT=$(echo "$INPUT" | python -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('content',''))" 2>/dev/null)
-elif [ "$TOOL_NAME" = "Edit" ]; then
-  CONTENT=$(echo "$INPUT" | python -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('new_string',''))" 2>/dev/null)
-else
+PYTHON="${REKALL_PYTHON:-}"
+
+# Resolve Python if not set by config
+if [ -z "$PYTHON" ]; then
+  for cmd in python3 python; do
+    if command -v "$cmd" > /dev/null 2>&1; then
+      if "$cmd" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+        PYTHON="$cmd"
+        break
+      fi
+    fi
+  done
+fi
+
+if [ -z "$PYTHON" ]; then
   exit 0
 fi
 
-if [ -z "$CONTENT" ]; then
-  exit 0
-fi
+# Single Python invocation: parse JSON from stdin, extract fields, check patterns.
+# Avoids multiple process spawns and environment variable size limits.
+"$PYTHON" << 'PYEOF' >&2
+import json
+import re
+import sys
 
-FILE_PATH=$(echo "$INPUT" | python -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('file_path',''))" 2>/dev/null)
+raw = sys.stdin.read()
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
+
+tool_name = data.get("tool_name", "")
+tool_input = data.get("tool_input", {})
+
+if tool_name == "Write":
+    content = tool_input.get("content", "")
+elif tool_name == "Edit":
+    content = tool_input.get("new_string", "")
+else:
+    sys.exit(0)
+
+if not content:
+    sys.exit(0)
+
+file_path = tool_input.get("file_path", "")
 
 # Allowlist: skip memory files, markdown, examples, templates
-case "$FILE_PATH" in
-  *.md) exit 0 ;;
-  *memory*) exit 0 ;;
-  *CLAUDE*) exit 0 ;;
-  *.example*) exit 0 ;;
-  *.template*) exit 0 ;;
-esac
+for suffix in (".md", ".example", ".template"):
+    if file_path.endswith(suffix):
+        sys.exit(0)
+for skip in ("memory", "CLAUDE"):
+    if skip in file_path:
+        sys.exit(0)
 
-# Secret patterns to check
-PATTERNS=(
-  'API_KEY\s*=\s*["\x27][A-Za-z0-9_\-]{16,}'
-  'SECRET_KEY\s*=\s*["\x27][A-Za-z0-9_\-]{16,}'
-  'API_SECRET\s*=\s*["\x27][A-Za-z0-9_\-]{16,}'
-  'PASSWORD\s*=\s*["\x27][^\s"'\'']{8,}'
-  'PRIVATE_KEY\s*=\s*["\x27]'
-  'Bearer\s+[A-Za-z0-9_\-\.]{20,}'
-  'AKIA[0-9A-Z]{16}'
-  'ghp_[A-Za-z0-9]{36}'
-  'sk-[A-Za-z0-9]{32,}'
-  'xox[bpoas]-[A-Za-z0-9\-]{10,}'
-)
+patterns = [
+    (r'API_KEY\s*=\s*["\x27][A-Za-z0-9_\-]{16,}', "API_KEY assignment"),
+    (r'SECRET_KEY\s*=\s*["\x27][A-Za-z0-9_\-]{16,}', "SECRET_KEY assignment"),
+    (r'API_SECRET\s*=\s*["\x27][A-Za-z0-9_\-]{16,}', "API_SECRET assignment"),
+    (r'PASSWORD\s*=\s*["\x27][^\s"\x27]{8,}', "PASSWORD assignment"),
+    (r'PRIVATE_KEY\s*=\s*["\x27]', "PRIVATE_KEY assignment"),
+    (r'Bearer\s+[A-Za-z0-9_\-\.]{20,}', "Bearer token"),
+    (r'AKIA[0-9A-Z]{16}', "AWS access key"),
+    (r'ghp_[A-Za-z0-9]{36}', "GitHub personal access token"),
+    (r'sk-[A-Za-z0-9]{32,}', "OpenAI/Stripe secret key"),
+    (r'xox[bpoas]-[A-Za-z0-9\-]{10,}', "Slack token"),
+]
 
-for PATTERN in "${PATTERNS[@]}"; do
-  if echo "$CONTENT" | grep -qP "$PATTERN" 2>/dev/null; then
-    MATCH=$(echo "$CONTENT" | grep -oP "$PATTERN" 2>/dev/null | head -1)
-    echo "BLOCKED: Potential secret detected matching pattern: ${PATTERN}" >&2
-    echo "Match preview: ${MATCH:0:20}..." >&2
-    echo "File: $FILE_PATH" >&2
-    echo "If this is intentional, use a .example or .template extension." >&2
-    exit 2
-  fi
-done
+for pattern, label in patterns:
+    match = re.search(pattern, content)
+    if match:
+        preview = match.group(0)[:20]
+        print(f"BLOCKED: Potential secret detected — {label}")
+        print(f"Match preview: {preview}...")
+        print(f"File: {file_path}")
+        print("If this is intentional, use a .example or .template extension.")
+        sys.exit(2)
 
-exit 0
+sys.exit(0)
+PYEOF
+# Python exits 2 if secret found (blocks the tool), 0 if clean.
+# With set -e, a non-zero exit propagates automatically.

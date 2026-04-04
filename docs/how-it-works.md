@@ -108,7 +108,7 @@ A JSONL file where each line is one learned pattern:
 
 ### Trigger Conditions
 
-- Only fires on files inside the Obsidian Vault path (detected by checking for `"Obsidian Vault"` in the file path).
+- Only fires on files inside the Obsidian Vault path (detected by exact prefix match against the configured vault path).
 - Only lints `.md` files.
 - Skips root-level special files: `Home.md`, `About {Name}.md`, `AGENDA.md`.
 
@@ -201,17 +201,17 @@ Obsidian Vault/
 
 | What | Where |
 |------|-------|
-| Vault | User-configured via `REKALL_VAULT_PATH` (default: `~/Documents/Obsidian Vault`) |
+| Vault | User-configured via `REKALL_VAULT_PATH` (default: `~/Obsidian Vault`) |
 | Hooks | `~/.claude/hooks/` |
 | Commands | `~/.claude/commands/` |
-| Memory (instincts + compiled) | `~/.claude/projects/{project}/memory/` |
+| Memory (instincts + compiled) | `~/.claude/rekall/memory/` |
 | Settings | `~/.claude/settings.json` |
 | MCP config | `~/.claude/mcp.json` |
 | CLAUDE.md | `~/.claude/CLAUDE.md` |
 | Project mappings | `~/.claude/rekall-projects.json` |
 | Processed sessions log | `~/.claude/sessions-processed.log` |
 
-The `{project}` in the memory path is an encoded version of the working directory (all non-alphanumeric characters replaced with `-`). `compile-memory.sh` auto-detects the memory directory by searching for the first `instincts.jsonl` file under `~/.claude/projects/`.
+The memory directory is at a stable, CWD-independent location. `compile-memory.sh` falls back to searching `~/.claude/projects/*/memory/` for legacy installs.
 
 ---
 

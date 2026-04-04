@@ -8,15 +8,15 @@ No LLM needed — pure file parsing.
 import json
 import os
 import sys
-import glob
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
-VAULT_PATH = Path(os.environ.get("REKALL_VAULT_PATH", os.path.expanduser("~/Documents/Obsidian Vault")))
+VAULT_PATH = Path(os.environ.get("REKALL_VAULT_PATH", os.path.expanduser("~/Obsidian Vault")))
 SESSIONS_DIR = VAULT_PATH / "Sessions"
 PROCESSED_LOG = Path(os.path.expanduser("~/.claude/sessions-processed.log"))
 CLAUDE_PROJECTS = Path(os.path.expanduser("~/.claude/projects"))
+
 
 def get_processed_sessions():
     """Read set of already-processed session IDs."""
@@ -24,33 +24,44 @@ def get_processed_sessions():
         return set()
     return set(PROCESSED_LOG.read_text(encoding="utf-8").strip().splitlines())
 
+
 def mark_processed(session_ids):
     """Append session IDs to the processed log."""
     with open(PROCESSED_LOG, "a", encoding="utf-8") as f:
         for sid in session_ids:
             f.write(sid + "\n")
 
+
 def find_session_files():
     """Find all session JSONL files across all projects."""
+    if not CLAUDE_PROJECTS.exists():
+        return []
+
     sessions = []
-    for project_dir in CLAUDE_PROJECTS.iterdir():
-        if not project_dir.is_dir():
-            continue
-        for jsonl_file in project_dir.glob("*.jsonl"):
-            # Skip files in subagent directories
-            if "subagent" in str(jsonl_file):
+    try:
+        for project_dir in CLAUDE_PROJECTS.iterdir():
+            if not project_dir.is_dir():
                 continue
-            session_id = jsonl_file.stem
-            sessions.append({
-                "id": session_id,
-                "path": jsonl_file,
-                "project_dir": project_dir.name,
-            })
+            try:
+                for jsonl_file in project_dir.glob("*.jsonl"):
+                    if "subagent" in str(jsonl_file):
+                        continue
+                    session_id = jsonl_file.stem
+                    sessions.append({
+                        "id": session_id,
+                        "path": jsonl_file,
+                        "project_dir": project_dir.name,
+                    })
+            except PermissionError:
+                continue
+    except PermissionError:
+        pass
+
     return sessions
+
 
 def parse_session_fast(session_path):
     """Fast parse a session JSONL — extract metadata without LLM."""
-    messages = []
     first_ts = None
     last_ts = None
     slug = None
@@ -86,7 +97,6 @@ def parse_session_fast(session_path):
                 user_message_count += 1
             elif entry_type == "assistant":
                 assistant_message_count += 1
-                # Extract file paths from tool_use blocks
                 msg = entry.get("message", {})
                 content = msg.get("content", [])
                 if isinstance(content, list):
@@ -95,12 +105,7 @@ def parse_session_fast(session_path):
                             inp = block.get("input", {})
                             fp = inp.get("file_path") or inp.get("path", "")
                             if fp and "Obsidian" not in fp and ".claude" not in fp:
-                                # Normalize to just filename
                                 files_touched.add(os.path.basename(fp))
-                            cmd = inp.get("command", "")
-                            if cmd:
-                                # Extract project signals from commands
-                                pass
 
     return {
         "slug": slug or "unnamed-session",
@@ -109,16 +114,21 @@ def parse_session_fast(session_path):
         "user_messages": user_message_count,
         "assistant_messages": assistant_message_count,
         "total_messages": user_message_count + assistant_message_count,
-        "files_touched": sorted(files_touched)[:20],  # Cap at 20
+        "files_touched": sorted(files_touched)[:20],
         "cwd": project_cwd,
     }
+
 
 def load_project_mappings():
     config_path = Path(os.path.expanduser("~/.claude/rekall-projects.json"))
     if config_path.exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f).get("mappings", [])
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f).get("mappings", [])
+        except (json.JSONDecodeError, PermissionError):
+            return []
     return []
+
 
 def infer_project_from_cwd(cwd):
     if not cwd:
@@ -128,6 +138,7 @@ def infer_project_from_cwd(cwd):
         if mapping["pattern"].lower() in cwd_lower:
             return mapping["project"]
     return None
+
 
 def format_timestamp(ts_str):
     """Parse ISO timestamp to readable format."""
@@ -139,6 +150,7 @@ def format_timestamp(ts_str):
     except (ValueError, TypeError):
         return "unknown"
 
+
 def get_date_from_ts(ts_str):
     """Extract YYYY-MM-DD from timestamp."""
     if not ts_str:
@@ -149,9 +161,10 @@ def get_date_from_ts(ts_str):
     except (ValueError, TypeError):
         return datetime.now().strftime("%Y-%m-%d")
 
+
 def write_skeleton_note(date, entries):
     """Write or append skeleton session note for a given date."""
-    SESSIONS_DIR.mkdir(exist_ok=True)
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     note_path = SESSIONS_DIR / f"{date}.md"
 
     new_sections = []
@@ -183,12 +196,21 @@ _pending deep extraction_
         new_sections.append(section)
 
     if note_path.exists():
-        # Append to existing note
         existing = note_path.read_text(encoding="utf-8")
+        # Skip sections whose session slug is already in the note (prevent duplicates)
+        filtered = []
+        for section in new_sections:
+            # Extract slug from the section header line
+            first_line = section.strip().split("\n")[0]
+            if first_line not in existing:
+                filtered.append(section)
+        if not filtered:
+            return
+        # Reset deep-extract to pending if new sessions were appended
+        existing = existing.replace("deep-extract: done", "deep-extract: pending")
         with open(note_path, "w", encoding="utf-8") as f:
-            f.write(existing.rstrip() + "\n\n" + "\n".join(new_sections))
+            f.write(existing.rstrip() + "\n\n" + "\n".join(filtered))
     else:
-        # Create new note with frontmatter
         frontmatter = f"""---
 date: {date}
 tags: [session]
@@ -203,24 +225,25 @@ deep-extract: pending
         with open(note_path, "w", encoding="utf-8") as f:
             f.write(frontmatter + "\n".join(new_sections))
 
+
 def main():
     processed = get_processed_sessions()
     all_sessions = find_session_files()
 
-    # Filter to unprocessed
     unprocessed = [s for s in all_sessions if s["id"] not in processed]
 
     if not unprocessed:
         return
 
-    # Parse each session
     parsed = []
     skipped = 0
     for session in unprocessed:
-        meta = parse_session_fast(session["path"])
+        try:
+            meta = parse_session_fast(session["path"])
+        except (PermissionError, OSError):
+            continue
         if meta["total_messages"] < 5:
             skipped += 1
-            # Still mark as processed so we don't re-check
             mark_processed([session["id"]])
             continue
         meta["session_id"] = session["id"]
@@ -229,27 +252,24 @@ def main():
     if not parsed:
         return
 
-    # Group by date
     by_date = defaultdict(list)
     for p in parsed:
         date = get_date_from_ts(p["first_ts"])
         by_date[date].append(p)
 
-    # Write skeleton notes
     total_logged = 0
     for date, entries in sorted(by_date.items()):
         write_skeleton_note(date, entries)
         total_logged += len(entries)
 
-    # Mark all as processed
     mark_processed([p["session_id"] for p in parsed])
 
-    # Output status for the hook
     dates = sorted(by_date.keys())
     date_range = dates[0] if len(dates) == 1 else f"{dates[0]} to {dates[-1]}"
     print(f"Session logger: {total_logged} session(s) logged ({date_range}). Deep extraction pending.", file=sys.stderr)
     if skipped:
         print(f"  Skipped {skipped} short session(s) (<5 messages).", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()
