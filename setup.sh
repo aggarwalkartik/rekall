@@ -115,7 +115,7 @@ fi
 # --- Step 4: Copy hooks ---
 printf "${YELLOW}[2/7] Installing hooks...${NC}\n"
 mkdir -p "$HOME/.claude/hooks"
-for hook in session-logger.py compile-memory.sh vault-lint.sh secrets-check.sh dangerous-cmd-check.sh file-size-check.sh; do
+for hook in session-logger.py compile-memory.sh secrets-check.sh dangerous-cmd-check.sh post-write.sh; do
   cp "$SCRIPT_DIR/hooks/$hook" "$HOME/.claude/hooks/$hook"
 done
 chmod +x "$HOME/.claude/hooks/"*.sh "$HOME/.claude/hooks/"*.py
@@ -229,23 +229,19 @@ for matcher, cmd in pre_hooks.items():
             "hooks": [{"type": "command", "command": cmd, "timeout": 10}]
         })
 
-# PostToolUse hooks
+# PostToolUse hook (single combined hook for vault lint + file size)
 settings["hooks"].setdefault("PostToolUse", [])
-post_hooks = [
-    ("Write|Edit", 'bash "$HOME/.claude/hooks/file-size-check.sh"'),
-    ("Write|Edit", 'bash "$HOME/.claude/hooks/vault-lint.sh"'),
-]
-for matcher, cmd in post_hooks:
-    exists = any(
-        h.get("matcher") == matcher and
-        any(hh.get("command") == cmd for hh in h.get("hooks", []))
-        for h in settings["hooks"]["PostToolUse"]
-    )
-    if not exists:
-        settings["hooks"]["PostToolUse"].append({
-            "matcher": matcher,
-            "hooks": [{"type": "command", "command": cmd, "timeout": 10}]
-        })
+post_cmd = 'bash "$HOME/.claude/hooks/post-write.sh"'
+post_exists = any(
+    h.get("matcher") == "Write|Edit" and
+    any(hh.get("command") == post_cmd for hh in h.get("hooks", []))
+    for h in settings["hooks"]["PostToolUse"]
+)
+if not post_exists:
+    settings["hooks"]["PostToolUse"].append({
+        "matcher": "Write|Edit",
+        "hooks": [{"type": "command", "command": post_cmd, "timeout": 10}]
+    })
 
 # SessionStart hook (increased timeout for first-run processing)
 settings["hooks"].setdefault("SessionStart", [])
@@ -304,20 +300,35 @@ if [ ! -f "$HOME/.claude/rekall-projects.json" ]; then
   cp "$SCRIPT_DIR/rekall-projects.json.example" "$HOME/.claude/rekall-projects.json"
 fi
 
+# --- Count past sessions ---
+PENDING_COUNT=0
+if [ -d "$HOME/.claude/projects" ]; then
+  PENDING_COUNT=$(find "$HOME/.claude/projects" -name "*.jsonl" -not -path "*subagent*" 2>/dev/null | wc -l | tr -d ' ')
+fi
+
 printf "\n"
-printf "${GREEN}Done! Rekall installed.${NC}\n"
+printf "${GREEN}Rekall installed.${NC}\n"
 printf "\n"
 printf "  Vault:    %s\n" "$VAULT_PATH"
-printf "  About:    About %s.md\n" "$USER_NAME"
 printf "  Config:   %s\n" "$CONFIG_FILE"
-printf "  Hooks:    ~/.claude/hooks/ (6 hooks)\n"
-printf "  Commands: ~/.claude/commands/ (4 commands)\n"
+printf "  Hooks:    5 hooks active\n"
 printf "  Memory:   %s\n" "$MEMORY_DIR"
 printf "\n"
-printf "${BLUE}Start a new Claude Code session — your past conversations will be processed automatically.${NC}\n"
+
+if [ "$PENDING_COUNT" -gt 0 ]; then
+  printf "${YELLOW}Found %s past Claude Code session(s).${NC}\n" "$PENDING_COUNT"
+  printf "  On your next session start, skeleton notes will be created in Sessions/.\n"
+  printf "  Claude will then offer to extract decisions, learnings, and ideas\n"
+  printf "  from those conversations into your vault.\n"
+  printf "\n"
+fi
+
+printf "${BLUE}Next steps:${NC}\n"
+printf "  1. Start a new Claude Code session in any project.\n"
+printf "  2. Rekall runs automatically — no commands needed.\n"
 printf "\n"
-printf "  Commands available:\n"
-printf "    /session-log          — capture current session\n"
-printf "    /vault-health         — audit vault health\n"
-printf "    /vault-consolidate    — synthesize project knowledge\n"
-printf "    /instincts-review     — review memory system\n"
+printf "  Available when you need them:\n"
+printf "    /session-log          capture the current session manually\n"
+printf "    /vault-health         audit vault structure\n"
+printf "    /vault-consolidate    synthesize project knowledge\n"
+printf "    /instincts-review     review what Rekall has learned about you\n"

@@ -152,4 +152,17 @@ if [ -d "$VAULT_PATH/Sessions" ]; then
   fi
 fi
 
+# First-run greeting — fires once after initial setup
+FIRST_RUN_FLAG="$HOME/.claude/rekall-first-run-done"
+if [ ! -f "$FIRST_RUN_FLAG" ]; then
+  touch "$FIRST_RUN_FLAG"
+  SESSION_COUNT=$(find "$HOME/.claude/projects" -name "*.jsonl" -not -path "*subagent*" 2>/dev/null | wc -l | tr -d ' ')
+  printf "\n## First Run\n" >> "$MEMORY_FILE"
+  printf "Rekall just ran for the first time. Greet the user briefly: say Rekall is active" >> "$MEMORY_FILE"
+  if [ "$SESSION_COUNT" -gt 0 ]; then
+    printf ", mention that %s past session(s) were found and skeleton notes are ready in Sessions/" "$SESSION_COUNT" >> "$MEMORY_FILE"
+  fi
+  printf ", and ask if they'd like you to run deep extraction now or defer it to later. Keep it to 2-3 sentences.\n" >> "$MEMORY_FILE"
+fi
+
 exit 0

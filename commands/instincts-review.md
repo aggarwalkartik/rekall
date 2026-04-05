@@ -4,7 +4,7 @@ Review and maintain the instincts memory system.
 
 ## Instructions
 
-1. **Read instincts** — Read your project's memory/instincts.jsonl file.
+1. **Read instincts** — Read the instincts.jsonl file from the memory directory configured in your CLAUDE.md.
 
 2. **Calculate effective confidence** — Apply decay: -0.05 per 30 days since `last_seen`.
 
@@ -33,4 +33,4 @@ Review and maintain the instincts memory system.
 
 5. **Show stats**: Total, by source, by domain, average age, average confidence.
 
-6. **Recompile MEMORY.md** after any changes by running your project's memory compile script.
+6. **Recompile MEMORY.md** after any changes — read instincts.jsonl, apply time-decay (-0.05 per 30 days since `last_seen`), filter out entries below 0.2 effective confidence, group by section, sort by confidence descending, and write the result to MEMORY.md in the same directory.

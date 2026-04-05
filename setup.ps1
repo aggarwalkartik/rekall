@@ -123,10 +123,9 @@ New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 $hookFiles = @(
     "session-logger.py",
     "compile-memory.sh",
-    "vault-lint.sh",
     "secrets-check.sh",
     "dangerous-cmd-check.sh",
-    "file-size-check.sh"
+    "post-write.sh"
 )
 foreach ($hook in $hookFiles) {
     Copy-Item (Join-Path $PSScriptRoot "hooks\$hook") (Join-Path $hooksDir $hook) -Force
@@ -251,21 +250,17 @@ for matcher, cmd in pre_hooks.items():
         })
 
 settings["hooks"].setdefault("PostToolUse", [])
-post_hooks = [
-    ("Write|Edit", 'bash "$HOME/.claude/hooks/file-size-check.sh"'),
-    ("Write|Edit", 'bash "$HOME/.claude/hooks/vault-lint.sh"'),
-]
-for matcher, cmd in post_hooks:
-    exists = any(
-        h.get("matcher") == matcher and
-        any(hh.get("command") == cmd for hh in h.get("hooks", []))
-        for h in settings["hooks"]["PostToolUse"]
-    )
-    if not exists:
-        settings["hooks"]["PostToolUse"].append({
-            "matcher": matcher,
-            "hooks": [{"type": "command", "command": cmd, "timeout": 10}]
-        })
+post_cmd = 'bash "$HOME/.claude/hooks/post-write.sh"'
+post_exists = any(
+    h.get("matcher") == "Write|Edit" and
+    any(hh.get("command") == post_cmd for hh in h.get("hooks", []))
+    for h in settings["hooks"]["PostToolUse"]
+)
+if not post_exists:
+    settings["hooks"]["PostToolUse"].append({
+        "matcher": "Write|Edit",
+        "hooks": [{"type": "command", "command": post_cmd, "timeout": 10}]
+    })
 
 settings["hooks"].setdefault("SessionStart", [])
 session_cmd = 'bash "$HOME/.claude/hooks/compile-memory.sh"'
@@ -340,7 +335,7 @@ Write-Host ""
 Write-Host "  Vault:    $VaultPath"
 Write-Host "  About:    About ${UserName}.md"
 Write-Host "  Config:   $configFile"
-Write-Host "  Hooks:    ~/.claude/hooks/ (6 hooks)"
+Write-Host "  Hooks:    ~/.claude/hooks/ (5 hooks)"
 Write-Host "  Commands: ~/.claude/commands/ (4 commands)"
 Write-Host "  Memory:   $MemoryDir"
 Write-Host ""

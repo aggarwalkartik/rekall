@@ -4,31 +4,12 @@
 
 set -euo pipefail
 
-# --- Load config ---
-CONFIG_FILE="$HOME/.claude/rekall.conf"
-if [ -f "$CONFIG_FILE" ]; then
-  # shellcheck source=/dev/null
-  source "$CONFIG_FILE"
-fi
-
-PYTHON="${REKALL_PYTHON:-}"
-
-# Resolve Python if not set by config
-if [ -z "$PYTHON" ]; then
-  for cmd in python3 python; do
-    if command -v "$cmd" > /dev/null 2>&1; then
-      PYTHON="$cmd"
-      break
-    fi
-  done
-fi
-
-if [ -z "$PYTHON" ]; then
-  exit 0
-fi
-
+# --- Extract command from stdin JSON without Python ---
 INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | "$PYTHON" -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('command',''))" 2>/dev/null)
+COMMAND=""
+if [[ "$INPUT" =~ \"command\"[[:space:]]*:[[:space:]]*\"(([^\"\\]|\\.)*)\" ]]; then
+  COMMAND="${BASH_REMATCH[1]}"
+fi
 
 if [ -z "$COMMAND" ]; then
   exit 0

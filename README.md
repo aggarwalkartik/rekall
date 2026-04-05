@@ -66,10 +66,9 @@ Setup creates a vault structure designed for long-term knowledge accumulation.
 |---|---|---|
 | `session-logger.py` | SessionStart | Auto-logs unprocessed sessions as vault notes |
 | `compile-memory.sh` | SessionStart | Compiles preferences + agenda into session context |
-| `vault-lint.sh` | PostToolUse | Warns on missing frontmatter, bad tags, orphan notes |
 | `secrets-check.sh` | PreToolUse | Blocks writes containing API keys or credentials |
 | `dangerous-cmd-check.sh` | PreToolUse | Blocks destructive shell commands (`rm -rf`, force push) |
-| `file-size-check.sh` | PostToolUse | Warns when files exceed 400 lines |
+| `post-write.sh` | PostToolUse | Vault linting + file size warnings (single hook, no Python spawn) |
 
 ## Customization
 

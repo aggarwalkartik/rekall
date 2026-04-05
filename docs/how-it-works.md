@@ -130,7 +130,7 @@ Non-blocking. Outputs warnings to stderr. The write still succeeds even if linti
 
 ## 4. Safety Hooks
 
-Three PreToolUse/PostToolUse hooks protect against common mistakes.
+Three hooks protect against common mistakes. Hooks avoid Python where possible to minimize per-call latency.
 
 ### `secrets-check.sh` — PreToolUse on Write/Edit
 
@@ -143,7 +143,7 @@ Scans the content being written for regex patterns matching common secret format
 - OpenAI keys (`sk-...`)
 - Slack tokens (`xox[bpoas]-...`)
 
-**Blocking** — exits with code 2 to prevent the write. Allowlisted extensions: `.md`, `.example`, `.template`, and paths containing `memory` or `CLAUDE`.
+**Blocking** — exits with code 2 to prevent the write. Allowlisted extensions: `.md`, `.example`, `.template`, and paths containing `memory` or `CLAUDE`. Uses a single Python invocation that reads stdin JSON, extracts fields, and runs all regex checks.
 
 ### `dangerous-cmd-check.sh` — PreToolUse on Bash
 
@@ -155,13 +155,16 @@ Checks the command string against destructive patterns:
 - `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE`
 - Fork bombs, `mkfs`, `dd if=`, raw disk writes
 
-**Blocking** — exits with code 2. Tells Claude to ask for explicit user confirmation.
+**Blocking** — exits with code 2. Tells Claude to ask for explicit user confirmation. No Python — extracts the command from JSON using bash regex.
 
-### `file-size-check.sh` — PostToolUse on Write/Edit
+### `post-write.sh` — PostToolUse on Write/Edit
 
-Counts lines in the written file. If it exceeds 400 lines, outputs a warning suggesting the file be split into smaller modules.
+Combined hook that performs two checks in a single invocation (no Python spawn):
 
-**Non-blocking** — warning only. Skips non-code files (`.md`, `.txt`, `.json`, `.yaml`, `.csv`, `.svg`, `.lock`).
+1. **File size** — If the written file exceeds 400 lines, outputs a warning. Skips non-code files.
+2. **Vault linting** — If the file is inside the vault, checks frontmatter, tags, status, wikilinks, parent links, and filename conventions.
+
+**Non-blocking** — warnings only. Replaced the previous `vault-lint.sh` and `file-size-check.sh` to cut per-write overhead from ~90ms to ~35ms.
 
 ---
 
