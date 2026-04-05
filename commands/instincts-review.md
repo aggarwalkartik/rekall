@@ -6,7 +6,7 @@ Review and maintain the instincts memory system.
 
 1. **Read instincts** — Read the instincts.jsonl file from the memory directory configured in your CLAUDE.md.
 
-2. **Calculate effective confidence** — Apply decay: -0.05 per 30 days since `last_seen`.
+2. **Calculate effective confidence** — Apply exponential decay: `effective = confidence × e^(-days / (60 × √evidence_count))` where `days` is days since `last_seen`.
 
 3. **Present grouped by health**:
 
@@ -33,4 +33,4 @@ Review and maintain the instincts memory system.
 
 5. **Show stats**: Total, by source, by domain, average age, average confidence.
 
-6. **Recompile MEMORY.md** after any changes — read instincts.jsonl, apply time-decay (-0.05 per 30 days since `last_seen`), filter out entries below 0.2 effective confidence, group by section, sort by confidence descending, and write the result to MEMORY.md in the same directory.
+6. **Recompile MEMORY.md** after any changes — read instincts.jsonl, apply exponential decay (`effective = confidence × e^(-days / (60 × √evidence_count))`), filter out entries below 0.2 effective confidence, run contradiction detection, group by section, sort by confidence descending, and write the result to MEMORY.md in the same directory. Conflicts appear as `[!conflict]` callouts.

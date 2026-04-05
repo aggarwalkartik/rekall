@@ -96,13 +96,72 @@ A JSONL file where each line is one learned pattern:
 
 **MEMORY.md is auto-generated. Do not edit it directly.** Edit `instincts.jsonl` instead.
 
+### Exponential Decay
+
+Effective confidence is computed at compile time using:
+
+```
+effective = confidence × e^(-days / (60 × √evidence_count))
+```
+
+Where `days` is the number of days since `last_seen`. This replaces the old flat -0.05/30d rule.
+
+The `evidence_count` term acts as a stabilizer. A pattern confirmed once (`evidence_count=1`) has a half-life of ~42 days. A pattern confirmed 9 times (`evidence_count=9`) has a half-life of ~125 days — three times longer. Heavily confirmed patterns don't fade just because you haven't needed them recently.
+
+Below effective confidence 0.2, the instinct is filtered from MEMORY.md output (the JSONL record is kept).
+
+### Contradiction Detection
+
+Before writing MEMORY.md, `compile-memory.sh` checks instincts pairwise for conflicts. Two instincts are flagged if they share enough semantic overlap (Jaccard similarity on word tokens, threshold 0.3) and show a polarity flip — one contains a positive signal ("prefers", "likes", "always") while the other contains a negative signal ("avoids", "dislikes", "never").
+
+Detected conflicts appear in MEMORY.md as:
+
+```
+> [!conflict] ins_012 vs ins_031
+> "Prefers concise responses" conflicts with "Wants exhaustive detail in technical answers"
+> Resolve with /instincts-review
+```
+
+The underlying JSONL records are not modified — resolution is intentionally manual via `/instincts-review`.
+
 ### Maintenance
 
 `/instincts-review` is a slash command that lets you audit the memory system: review instincts by confidence, dismiss false patterns, confirm tentative ones, or adjust confidence manually.
 
 ---
 
-## 3. Vault Linting
+## 3. Vault Researcher
+
+`vault-researcher.py` runs as a **PreToolUse** hook on every `WebSearch` call.
+
+### Hook Flow
+
+1. Extracts the search query from the tool input.
+2. Searches vault filenames for word matches against the query (case-insensitive, whole-word).
+3. If fewer than 5 matches, falls back to scanning frontmatter `summary` fields across all `.md` files.
+4. Caps results at 5 matches to avoid flooding context.
+5. Formats matches as a readable list and injects them via `additionalContext` in the hook response.
+
+The web search still runs — this hook is non-blocking. The vault results appear as context Claude sees before processing the search results.
+
+### Search Strategy
+
+**Filename search first**: Tokenizes the query and looks for matches in note filenames. Exact and partial word matches qualify. This is fast and tends to surface the most directly relevant notes.
+
+**Frontmatter fallback**: If filename search yields fewer than 5 results, scans `summary` fields in frontmatter across the vault. Slower, but catches notes whose filenames don't match the query vocabulary.
+
+### additionalContext Format
+
+```
+Vault matches for "your query":
+- Research/FastF1 Python Library.md — Python wrapper for Formula 1 timing data
+- Decisions/Data Source Choice.md — Chose FastF1 over Ergast API for lap-level data
+(3 more vault notes found — use /vault-health to review)
+```
+
+---
+
+## 4. Vault Linting
 
 `vault-lint.sh` runs as a **PostToolUse** hook on every `Write` or `Edit` operation.
 
@@ -128,7 +187,7 @@ Non-blocking. Outputs warnings to stderr. The write still succeeds even if linti
 
 ---
 
-## 4. Safety Hooks
+## 5. Safety Hooks
 
 Three hooks protect against common mistakes. Hooks avoid Python where possible to minimize per-call latency.
 
@@ -168,7 +227,7 @@ Combined hook that performs two checks in a single invocation (no Python spawn):
 
 ---
 
-## 5. Vault Structure
+## 6. Vault Structure
 
 ```
 Obsidian Vault/
@@ -200,7 +259,7 @@ Obsidian Vault/
 
 ---
 
-## 6. File Locations
+## 7. File Locations
 
 | What | Where |
 |------|-------|
@@ -218,7 +277,7 @@ The memory directory is at a stable, CWD-independent location. `compile-memory.s
 
 ---
 
-## 7. JSONL Session Format
+## 8. JSONL Session Format
 
 Claude Code stores conversation history as JSONL files. Each session is one file at:
 

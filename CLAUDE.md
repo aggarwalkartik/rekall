@@ -180,13 +180,18 @@ Only `user-explicit` patterns can reach 0.9. Observed patterns cap at 0.7 (after
 - `0.5` — Observed 1-2 times
 - `0.3` — Tentative, single interaction
 - Reduce by 0.1 if user corrects the behavior
-- Auto-decays by 0.05 per 30 days if not re-observed
-- Below 0.2 = removed from compiled MEMORY.md
+- Decays exponentially: `effective = confidence × e^(-days / (60 × √evidence_count))` — higher evidence_count means slower decay
+- Below 0.2 effective confidence = removed from compiled MEMORY.md
+- Conflicts between instincts surface as `[!conflict]` callouts in MEMORY.md — resolve with `/instincts-review`
 
 ### Updating instincts
 - When a pattern is re-confirmed, update `last_seen` and increment `evidence_count`
 - When adding a user-explicit preference, set `source: "user-explicit"` and `confidence: 0.9`
 - Use next available `ins_NNN` id (check the last id in the file)
+
+### Vault Researcher
+
+A PreToolUse hook runs on every web search. Before the search executes, it checks your vault for relevant notes (filename match first, frontmatter summary fallback, capped at 5 results) and injects them as context. Expect vault matches to appear above web results when the topic overlaps with existing notes.
 
 ### Domain tags
 `design`, `business`, `finance`, `dev`, `personal`, `knowledge-management`, `data-viz`, `email`, `job-search`, `general`

@@ -4,6 +4,14 @@
 
 Rekall turns your Claude Code conversation history into a structured Obsidian knowledge base — automatically. No manual logging, no copy-paste, no plugins. Every session you've ever had becomes searchable, linked knowledge.
 
+## What's New in v2
+
+**Vault Researcher** — A PreToolUse hook intercepts every web search and checks your vault first. It searches filenames then falls back to frontmatter summaries, injecting up to 5 matches as `additionalContext` before the search runs. You get relevant local knowledge before Claude reaches for the web.
+
+**Exponential Decay** — Confidence now decays as `effective = confidence × e^(-days / (60 × √evidence_count))`. The more times a pattern has been confirmed, the slower it fades. A pattern seen once decays at the base rate; one seen 9 times decays at a third of that rate. The old flat -0.05/30d rule is gone.
+
+**Contradiction Detection** — When adding or updating an instinct, the compiler checks for conflicts using Jaccard similarity plus polarity-flip detection (e.g., "prefers X" vs "avoids X"). Conflicts surface as `[!conflict]` callouts in MEMORY.md so you can resolve them during the next instincts review.
+
 ## What it does
 
 Rekall works in three layers.
@@ -66,6 +74,7 @@ Setup creates a vault structure designed for long-term knowledge accumulation.
 |---|---|---|
 | `session-logger.py` | SessionStart | Auto-logs unprocessed sessions as vault notes |
 | `compile-memory.sh` | SessionStart | Compiles preferences + agenda into session context |
+| `vault-researcher.py` | PreToolUse | Checks vault for relevant notes before web searches |
 | `secrets-check.sh` | PreToolUse | Blocks writes containing API keys or credentials |
 | `dangerous-cmd-check.sh` | PreToolUse | Blocks destructive shell commands (`rm -rf`, force push) |
 | `post-write.sh` | PostToolUse | Vault linting + file size warnings (single hook, no Python spawn) |
