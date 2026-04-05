@@ -79,14 +79,17 @@ if not instincts:
         f.write("# Memory\n\n_No instincts recorded yet._\n")
     raise SystemExit(0)
 
-# Apply time-based decay: -0.05 per 30 days since last_seen
+# Apply exponential decay weighted by evidence count
+# Formula: effective = confidence * e^(-days / (60 * sqrt(evidence_count)))
+# Single observations fade fast; well-established patterns persist
+import math
 today = datetime.now().date()
 for inst in instincts:
     last_seen_str = inst.get("last_seen") or today.strftime("%Y-%m-%d")
     last_seen = datetime.strptime(last_seen_str, "%Y-%m-%d").date()
     days_since = (today - last_seen).days
-    decay = (days_since // 30) * 0.05
-    inst["effective_confidence"] = max(0, inst["confidence"] - decay)
+    evidence = max(inst.get("evidence_count", 1), 1)
+    inst["effective_confidence"] = inst["confidence"] * math.exp(-days_since / (60 * math.sqrt(evidence)))
 
 # Filter out entries below 0.2
 instincts = [i for i in instincts if i["effective_confidence"] >= 0.2]
