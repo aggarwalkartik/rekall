@@ -94,6 +94,47 @@ for inst in instincts:
 # Filter out entries below 0.2
 instincts = [i for i in instincts if i["effective_confidence"] >= 0.2]
 
+# Detect contradictions within same (domain, section) groups
+import re as _re
+
+_STOPWORDS = {"a","an","the","is","are","was","were","what","how","why","when",
+    "where","which","who","do","does","did","can","could","should","would",
+    "about","for","with","from","into","on","at","to","in","of","and","or",
+    "but","not","best","latest","recent","current","new","top","all","any",
+    "be","been","being","have","has","had","it","its","this","that","these",
+    "those","then","than","so","if","just","only","very","also","each","every"}
+_NEGATION = {"never","don't","dont","avoid","skip","without","stop","not",
+    "no","disable","remove","exclude","ban"}
+_AFFIRMATION = {"always","use","prefer","ensure","must","require","enable",
+    "include","force","mandate"}
+
+def _tokenize(text):
+    return {w for w in _re.findall(r'[a-z]+', text.lower()) if w not in _STOPWORDS}
+
+def _jaccard(a, b):
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+contradictions = []
+_groups = {}
+for inst in instincts:
+    _key = (inst.get("domain",""), inst.get("section",""))
+    _groups.setdefault(_key, []).append(inst)
+for _key, _items in _groups.items():
+    for _i in range(len(_items)):
+        for _j in range(_i+1, len(_items)):
+            _tok_i = _tokenize(_items[_i]["pattern"])
+            _tok_j = _tokenize(_items[_j]["pattern"])
+            if _jaccard(_tok_i, _tok_j) > 0.1:
+                _norm_i = _items[_i]["pattern"].lower().replace("'", "")
+                _norm_j = _items[_j]["pattern"].lower().replace("'", "")
+                _words_i = set(_re.findall(r'[a-z]+', _norm_i))
+                _words_j = set(_re.findall(r'[a-z]+', _norm_j))
+                if (bool(_words_i & _NEGATION) and bool(_words_j & _AFFIRMATION)) or \
+                   (bool(_words_j & _NEGATION) and bool(_words_i & _AFFIRMATION)):
+                    contradictions.append((_items[_i], _items[_j]))
+
 # Group by section
 sections = defaultdict(list)
 for inst in instincts:
@@ -128,6 +169,15 @@ for section_name in section_order:
         else:
             lines.append(f"- {pattern}{marker}")
     lines.append("")
+
+if contradictions:
+    lines.append("## Contradictions Detected")
+    for a, b in contradictions:
+        lines.append(f"> [!conflict] Possible contradiction in {a.get('section', 'Unknown')}")
+        lines.append(f"> - {a['id']}: \"{a['pattern']}\"")
+        lines.append(f"> - {b['id']}: \"{b['pattern']}\"")
+        lines.append(f"> Review and resolve — merge into a conditional pattern, or remove one.")
+        lines.append("")
 
 output = "\n".join(lines)
 with open(memory_path, "w", encoding="utf-8") as f:
