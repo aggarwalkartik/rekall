@@ -29,14 +29,19 @@ if [ -z "$PYTHON" ]; then
   exit 0
 fi
 
-# Single Python invocation: parse JSON from stdin, extract fields, check patterns.
-# Avoids multiple process spawns and environment variable size limits.
+# Capture stdin before the heredoc consumes it
+INPUT=$(cat)
+
+# Pass input via env var to Python (heredoc takes over stdin)
+export _REKALL_INPUT="$INPUT"
+
 "$PYTHON" << 'PYEOF' >&2
 import json
+import os
 import re
 import sys
 
-raw = sys.stdin.read()
+raw = os.environ.get("_REKALL_INPUT", "")
 try:
     data = json.loads(raw)
 except json.JSONDecodeError:
