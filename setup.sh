@@ -115,7 +115,7 @@ fi
 # --- Step 4: Copy hooks ---
 printf "${YELLOW}[2/7] Installing hooks...${NC}\n"
 mkdir -p "$HOME/.claude/hooks"
-for hook in session-logger.py compile-memory.sh secrets-check.sh dangerous-cmd-check.sh post-write.sh; do
+for hook in session-logger.py compile-memory.sh secrets-check.sh dangerous-cmd-check.sh post-write.sh vault-researcher.sh; do
   cp "$SCRIPT_DIR/hooks/$hook" "$HOME/.claude/hooks/$hook"
 done
 chmod +x "$HOME/.claude/hooks/"*.sh "$HOME/.claude/hooks/"*.py
@@ -213,11 +213,12 @@ settings.setdefault("hooks", {})
 
 # PreToolUse hooks
 settings["hooks"].setdefault("PreToolUse", [])
-pre_hooks = {
-    "Write|Edit": 'bash "$HOME/.claude/hooks/secrets-check.sh"',
-    "Bash": 'bash "$HOME/.claude/hooks/dangerous-cmd-check.sh"',
-}
-for matcher, cmd in pre_hooks.items():
+pre_hooks = [
+    ("Write|Edit", 'bash "$HOME/.claude/hooks/secrets-check.sh"', 10),
+    ("Bash",       'bash "$HOME/.claude/hooks/dangerous-cmd-check.sh"', 10),
+    ("WebSearch",  'bash "$HOME/.claude/hooks/vault-researcher.sh"', 5),
+]
+for matcher, cmd, timeout in pre_hooks:
     exists = any(
         h.get("matcher") == matcher and
         any(hh.get("command") == cmd for hh in h.get("hooks", []))
@@ -226,7 +227,7 @@ for matcher, cmd in pre_hooks.items():
     if not exists:
         settings["hooks"]["PreToolUse"].append({
             "matcher": matcher,
-            "hooks": [{"type": "command", "command": cmd, "timeout": 10}]
+            "hooks": [{"type": "command", "command": cmd, "timeout": timeout}]
         })
 
 # PostToolUse hook (single combined hook for vault lint + file size)
@@ -311,7 +312,7 @@ printf "${GREEN}Rekall installed.${NC}\n"
 printf "\n"
 printf "  Vault:    %s\n" "$VAULT_PATH"
 printf "  Config:   %s\n" "$CONFIG_FILE"
-printf "  Hooks:    5 hooks active\n"
+printf "  Hooks:    6 hooks active\n"
 printf "  Memory:   %s\n" "$MEMORY_DIR"
 printf "\n"
 
