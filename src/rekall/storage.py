@@ -238,6 +238,23 @@ class Storage:
         ).fetchall()
         return [Chunk(**dict(r)) for r in rows]
 
+    def list_documents(
+        self, type: str | None = None, project: str | None = None,
+        status: str = "active", limit: int = 20,
+    ) -> list[Document]:
+        sql = "SELECT * FROM documents WHERE status = ?"
+        params: list = [status]
+        if type:
+            sql += " AND type = ?"
+            params.append(type)
+        if project:
+            sql += " AND project = ?"
+            params.append(project)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [Document(**dict(r)) for r in rows]
+
     def next_document_id(self) -> str:
         row = self.conn.execute(
             "SELECT id FROM documents ORDER BY rowid DESC LIMIT 1"
