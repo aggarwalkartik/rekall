@@ -1,22 +1,20 @@
 # Rekall
 
-**A personal AI memory layer that builds itself.**
+**A second brain that builds itself.**
 
-Rekall gives your AI tools persistent memory across sessions. It extracts knowledge from your conversations automatically, stores it with semantic embeddings, and makes it searchable by meaning. Works with Claude Code, Cursor, and Windsurf via MCP.
+Your AI tools forget everything between sessions. Rekall fixes that. It extracts knowledge from your conversations automatically, embeds it locally, and makes it searchable by meaning. Next time you ask about something you've discussed before, it's already there.
 
----
+```
+You: "What did I decide about hosting?"
 
-## What it does
+Rekall recalls:
+  - Chose Cloudflare Pages over Vercel for free tier and edge deployment (decision, 0.85)
+  - Vercel has better Next.js integration but charges for bandwidth (research, 0.72)
+```
 
-- **Recall** - hybrid search (keyword + semantic) finds relevant knowledge before you even ask
-- **Remember** - store facts, preferences, and decisions with automatic deduplication
-- **Extract** - automatically mines past conversations from Claude Code and Cursor
-- **Compile** - generates `MEMORY.md` injected at session start with your preferences and instincts
-- **Sync** - optionally exports memories to an Obsidian vault as human-readable notes
+Works with Claude Code, Cursor, and Windsurf. One MCP server, all your tools share the same memory.
 
----
-
-## Quick start
+## Get started
 
 ```bash
 git clone https://github.com/aggarwalkartik/rekall
@@ -24,15 +22,7 @@ cd rekall
 uv run rekall
 ```
 
-First run downloads the embedding model (~130MB) and creates `~/.rekall/rekall.db`.
-
----
-
-## MCP configuration
-
-Add Rekall as an MCP server so your AI tool can use `recall`, `remember`, `forget`, and `list_memories`.
-
-### Claude Code (`~/.claude/mcp.json`)
+Add to your tool's MCP config:
 
 ```json
 {
@@ -45,106 +35,63 @@ Add Rekall as an MCP server so your AI tool can use `recall`, `remember`, `forge
 }
 ```
 
-### Cursor (`~/.cursor/mcp.json`)
+That's it. Your AI tools now have persistent memory.
 
-```json
-{
-  "mcpServers": {
-    "rekall": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/rekall", "rekall"]
-    }
-  }
-}
-```
+## What happens next
 
-### Windsurf (`~/.codeium/windsurf/mcp_config.json`)
+**Claude Code** - A startup hook extracts your past sessions automatically. Every conversation you've ever had becomes searchable on first run.
 
-```json
-{
-  "mcpServers": {
-    "rekall": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/rekall", "rekall"]
-    }
-  }
-}
-```
+**Cursor** - The MCP server extracts your full Cursor history in the background when it starts. Sidebar chats, composer, agent mode - all of it.
 
-Replace `/path/to/rekall` with wherever you cloned the repo.
+**Both tools** - `recall` searches by meaning, not keywords. Ask about "pricing strategy" and it finds your research on "tiered service packages" even though those words never overlap.
 
----
+## How it's different
 
-## How conversation extraction works
+Most AI memory tools (mem0, Engram) store what the LLM extracts. [A mem0 audit found 97.8% of extracted memories were junk.](https://github.com/mem0ai/mem0/issues/4573) Rekall stores your conversations verbatim and lets the embedding layer find what's relevant. Better retrieval, zero noise.
 
-### Claude Code
+What Rekall adds that others don't:
 
-A SessionStart hook runs `rekall-extract` on every new session. It reads your past Claude Code conversations from `~/.claude/projects/`, filters noise, chunks meaningful exchanges, embeds them, and stores them in SQLite. Fully automatic.
+- **Confidence decay** - memories fade over time unless reinforced. A pattern seen once fades in weeks. One confirmed 9 times lasts months.
+- **Contradiction detection** - conflicting preferences get flagged, not silently applied.
+- **Cross-tool memory** - Claude Code and Cursor share the same knowledge base. Switch tools, keep context.
+- **Automatic extraction** - no "remember this" needed. Your conversations are mined on startup.
 
-### Cursor
+## Tools
 
-When the MCP server starts (which happens when you open a project in Cursor), it spawns a background task that reads Cursor's conversation history from `state.vscdb`. Parses both sidebar chat and composer/agent conversations. First run extracts your full Cursor history. Subsequent runs only process new conversations.
+The MCP server exposes four tools:
 
-### What gets extracted
+| Tool | What it does |
+|---|---|
+| `recall` | Search memories by meaning. Hybrid keyword + semantic search. |
+| `remember` | Store a fact, preference, or decision. Deduplicates automatically. |
+| `forget` | Archive a memory. Soft-delete, recoverable. |
+| `list_memories` | Browse by type, project, or status. |
 
-Conversations are stored verbatim - no LLM summarization. The embedding layer makes them searchable by meaning. Short messages, tool outputs, and system messages are filtered as noise.
+## Under the hood
 
----
+- **SQLite** with FTS5 (keyword) + sqlite-vec (384-dim vectors). Hybrid results ranked by Reciprocal Rank Fusion.
+- **bge-small-en-v1.5** via fastembed. Runs locally on CPU, no API key, ~50ms per embedding.
+- **MEMORY.md** compiled on startup from high-confidence instincts. Injected into context so your AI already knows your preferences.
+- **Obsidian sync** optional. `rekall-sync --vault /path/to/vault` exports memories as markdown notes.
 
-## Migration from v2
+## Commands
 
-If you used Rekall v2 (Obsidian vault + `instincts.jsonl`):
+| Command | What it does |
+|---|---|
+| `rekall` | Start the MCP server |
+| `rekall-extract` | Extract past sessions (add `--cursor` for Cursor only) |
+| `rekall-compile` | Compile MEMORY.md from active instincts |
+| `rekall-migrate` | Import v2 instincts and/or Obsidian vault |
+| `rekall-backup` | Hot backup the database |
+| `rekall-sync` | Export memories to Obsidian vault |
+
+## Migrating from v2
 
 ```bash
 uv run rekall-migrate --instincts /path/to/instincts.jsonl --vault /path/to/vault
 ```
 
-Both flags are optional.
-
----
-
-## How it works
-
-```
-Your AI tool ──MCP──► recall "pricing strategy"
-                          │
-                          ├─ FTS5 keyword search  ─┐
-                          └─ Vector similarity     ─┴─► RRF rank ──► top results
-
-rekall-compile ──► SQLite memories ──► MEMORY.md (injected at session start)
-rekall-extract ──► Claude Code JSONL + Cursor .vscdb ──► embedded documents
-```
-
-**Storage**: SQLite with FTS5 (keyword search) and sqlite-vec (384-dim vector search). Results merged with Reciprocal Rank Fusion.
-
-**Embeddings**: `bge-small-en-v1.5` via fastembed (ONNX Runtime). Runs locally on CPU, no API key needed.
-
-**MEMORY.md**: Active instincts grouped by domain, filtered by exponential confidence decay. Contradictions surface as `[!conflict]` callouts.
-
-**Obsidian sync**: `rekall-sync --vault /path/to/vault` exports memories as markdown notes with proper frontmatter, Title Case filenames, and wikilinks.
-
----
-
-## Entry points
-
-| Command | What it does |
-|---|---|
-| `rekall` | Start the MCP server |
-| `rekall-extract` | Extract Claude Code sessions (also `--cursor` for Cursor only) |
-| `rekall-compile` | Compile `MEMORY.md` from active instincts |
-| `rekall-migrate` | Import v2 instincts and/or Obsidian vault |
-| `rekall-backup` | Hot backup the database |
-| `rekall-sync` | Export memories to an Obsidian vault |
-
----
-
-## What carries over from v2
-
-- **Confidence decay** - `effective = confidence × e^(-days / (60 × √evidence_count))`. Single observations fade fast. Well-confirmed patterns persist.
-- **Contradiction detection** - Jaccard similarity + polarity-flip detection flags conflicting instincts in `MEMORY.md`.
-- **Safety hooks** - secrets check and dangerous command check ship as Claude Code hooks.
-
----
+Both flags optional.
 
 ## License
 
