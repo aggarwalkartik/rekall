@@ -1,49 +1,45 @@
 # Rekall
 
-**Personal AI memory layer — not a note-taking tool.**
+**A personal AI memory layer that builds itself.**
 
-Rekall gives Claude persistent memory across sessions using SQLite + vector embeddings. Every conversation can recall what you've told it before, without repeating yourself. It runs as an MCP server.
+Rekall gives your AI tools persistent memory across sessions. It extracts knowledge from your conversations automatically, stores it with semantic embeddings, and makes it searchable by meaning. Works with Claude Code, Cursor, and Windsurf via MCP.
 
 ---
 
 ## What it does
 
-- **Remember** — store facts, preferences, and decisions as searchable memories
-- **Recall** — hybrid search (keyword + semantic) surfaces relevant context before you ask
-- **Compile** — generates `MEMORY.md` injected at session start, so Claude already knows your instincts
-- **Extract** — mines past Claude Code sessions and stores them as documents
-- **Migrate** — imports your v2 `instincts.jsonl` and Obsidian vault notes into v3 SQLite
+- **Recall** — hybrid search (keyword + semantic) finds relevant knowledge before you even ask
+- **Remember** — store facts, preferences, and decisions with automatic deduplication
+- **Extract** — automatically mines past conversations from Claude Code and Cursor
+- **Compile** — generates `MEMORY.md` injected at session start with your preferences and instincts
+- **Sync** — optionally exports memories to an Obsidian vault as human-readable notes
 
 ---
 
 ## Quick start
 
 ```bash
-# Run directly with uvx (no install)
-uvx rekall
-
-# Or with uv in a cloned repo
+git clone https://github.com/aggarwalkartik/rekall
+cd rekall
 uv run rekall
 ```
 
-Rekall stores everything under `~/.rekall/` by default:
-- `~/.rekall/rekall.db` — SQLite database (memories + documents + vectors)
-- `~/.rekall/backups/` — hot backups
+First run downloads the embedding model (~130MB) and creates `~/.rekall/rekall.db`.
 
 ---
 
 ## MCP configuration
 
-Add Rekall as an MCP server so Claude can call `remember`, `recall`, `forget`, and `list`.
+Add Rekall as an MCP server so your AI tool can use `recall`, `remember`, `forget`, and `list_memories`.
 
-### Claude Code (`~/.claude/settings.json`)
+### Claude Code (`~/.claude/mcp.json`)
 
 ```json
 {
   "mcpServers": {
     "rekall": {
-      "command": "uvx",
-      "args": ["rekall"]
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/rekall", "rekall"]
     }
   }
 }
@@ -55,8 +51,8 @@ Add Rekall as an MCP server so Claude can call `remember`, `recall`, `forget`, a
 {
   "mcpServers": {
     "rekall": {
-      "command": "uvx",
-      "args": ["rekall"]
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/rekall", "rekall"]
     }
   }
 }
@@ -68,46 +64,64 @@ Add Rekall as an MCP server so Claude can call `remember`, `recall`, `forget`, a
 {
   "mcpServers": {
     "rekall": {
-      "command": "uvx",
-      "args": ["rekall"]
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/rekall", "rekall"]
     }
   }
 }
 ```
 
+Replace `/path/to/rekall` with wherever you cloned the repo.
+
+---
+
+## How conversation extraction works
+
+### Claude Code
+
+A SessionStart hook runs `rekall-extract` on every new session. It reads your past Claude Code conversations from `~/.claude/projects/`, filters noise, chunks meaningful exchanges, embeds them, and stores them in SQLite. Fully automatic.
+
+### Cursor
+
+When the MCP server starts (which happens when you open a project in Cursor), it spawns a background task that reads Cursor's conversation history from `state.vscdb`. Parses both sidebar chat and composer/agent conversations. First run extracts your full Cursor history. Subsequent runs only process new conversations.
+
+### What gets extracted
+
+Conversations are stored verbatim — no LLM summarization. The embedding layer makes them searchable by meaning. Short messages, tool outputs, and system messages are filtered as noise.
+
 ---
 
 ## Migration from v2
 
-If you were using Rekall v2 (vault + `instincts.jsonl`), migrate your data to v3 SQLite in one command:
+If you used Rekall v2 (Obsidian vault + `instincts.jsonl`):
 
 ```bash
-rekall-migrate --instincts ~/.claude/projects/.../memory/instincts.jsonl --vault ~/path/to/vault
+uv run rekall-migrate --instincts /path/to/instincts.jsonl --vault /path/to/vault
 ```
 
-Both flags are optional — run with just `--instincts` if you don't want to import vault notes, or just `--vault` to skip instincts.
+Both flags are optional.
 
 ---
 
 ## How it works
 
 ```
-Claude ──MCP──► rekall recall "X"
-                    │
-                    ├─ FTS5 keyword search  ─┐
-                    └─ Vector similarity     ─┴─► hybrid rank ──► top-N results
-                    
-rekall-compile ──► reads memories from SQLite ──► writes MEMORY.md
-rekall-extract ──► reads ~/.claude session JSONLs ──► stores as documents
+Your AI tool ──MCP──► recall "pricing strategy"
+                          │
+                          ├─ FTS5 keyword search  ─┐
+                          └─ Vector similarity     ─┴─► RRF rank ──► top results
+
+rekall-compile ──► SQLite memories ──► MEMORY.md (injected at session start)
+rekall-extract ──► Claude Code JSONL + Cursor .vscdb ──► embedded documents
 ```
 
-**Storage**: SQLite with two virtual tables — `memories_fts` (FTS5) for keyword search and `vec_memories`/`vec_chunks` (sqlite-vec) for semantic search. Hybrid results are re-ranked by RRF (Reciprocal Rank Fusion).
+**Storage**: SQLite with FTS5 (keyword search) and sqlite-vec (384-dim vector search). Results merged with Reciprocal Rank Fusion.
 
-**Embeddings**: `all-MiniLM-L6-v2` via `sentence-transformers`. 384-dimensional vectors. Runs locally, no API key required.
+**Embeddings**: `bge-small-en-v1.5` via fastembed (ONNX Runtime). Runs locally on CPU, no API key needed.
 
-**MEMORY.md compilation**: Active instincts grouped by section, filtered by effective confidence (exponential decay). Conflicts surface as `[!conflict]` callouts for review.
+**MEMORY.md**: Active instincts grouped by domain, filtered by exponential confidence decay. Contradictions surface as `[!conflict]` callouts.
 
-**Session extraction**: Reads raw Claude Code session JSONL files, chunks conversations, embeds and stores them as searchable documents.
+**Obsidian sync**: `rekall-sync --vault /path/to/vault` exports memories as markdown notes with proper frontmatter, Title Case filenames, and wikilinks.
 
 ---
 
@@ -116,19 +130,19 @@ rekall-extract ──► reads ~/.claude session JSONLs ──► stores as docu
 | Command | What it does |
 |---|---|
 | `rekall` | Start the MCP server |
-| `rekall-extract` | Extract past Claude Code sessions into the database |
+| `rekall-extract` | Extract Claude Code sessions (also `--cursor` for Cursor only) |
 | `rekall-compile` | Compile `MEMORY.md` from active instincts |
-| `rekall-migrate` | Import v2 instincts.jsonl and/or Obsidian vault notes |
-| `rekall-backup` | Hot backup the database (`sqlite3.backup()`) |
-| `rekall-sync` | Sync memories to/from a remote store (planned) |
+| `rekall-migrate` | Import v2 instincts and/or Obsidian vault |
+| `rekall-backup` | Hot backup the database |
+| `rekall-sync` | Export memories to an Obsidian vault |
 
 ---
 
 ## What carries over from v2
 
-- **Confidence decay** — `effective = confidence × e^(-days / (60 × √evidence_count))`. Patterns seen once fade fast; patterns confirmed 9+ times decay at a third of the base rate.
-- **Contradiction detection** — Jaccard similarity + polarity-flip detection flags conflicting instincts (e.g. "prefers X" vs "avoids X") as `[!conflict]` callouts in `MEMORY.md`.
-- **Safety hooks** — secrets check and dangerous command check still ship as Claude Code hooks.
+- **Confidence decay** — `effective = confidence × e^(-days / (60 × √evidence_count))`. Single observations fade fast. Well-confirmed patterns persist.
+- **Contradiction detection** — Jaccard similarity + polarity-flip detection flags conflicting instincts in `MEMORY.md`.
+- **Safety hooks** — secrets check and dangerous command check ship as Claude Code hooks.
 
 ---
 
