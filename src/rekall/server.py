@@ -192,9 +192,10 @@ def create_app() -> FastMCP:
             query_vec = ctx.embedder.embed(text)
             similar = ctx.db.vec_search_memories(query_vec, limit=3)
             for mem_id, distance in similar:
-                # sqlite-vec returns cosine distance; similarity = 1 - distance
-                similarity = 1.0 - distance
-                if similarity > 0.90:
+                # sqlite-vec vec0 returns L2 distance. For normalized vectors
+                # (bge-small outputs unit vectors): cosine_sim = 1 - (L2^2 / 2)
+                cosine_sim = 1.0 - (distance * distance / 2.0)
+                if cosine_sim > 0.90:
                     ctx.db.bump_evidence(mem_id)
                     return json.dumps(
                         {

@@ -82,7 +82,11 @@ def setup_claude_code() -> None:
 
 
     # --- Copy safety hooks ---
+    # Resolve hooks dir relative to source tree (works for git clone + uv run)
     hooks_src = Path(__file__).resolve().parent.parent.parent / "hooks"
+    if not hooks_src.exists():
+        # Fallback: check cwd (user may be running from repo root)
+        hooks_src = Path.cwd() / "hooks"
     hooks_dst = claude_dir / "hooks"
     hooks_dst.mkdir(parents=True, exist_ok=True)
 

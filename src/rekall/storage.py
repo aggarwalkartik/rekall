@@ -485,7 +485,7 @@ class Storage:
     def memory_content_hash_exists(self, content_hash: str) -> str | None:
         """Check if a memory with this content hash exists. Returns memory ID or None."""
         row = self.conn.execute(
-            "SELECT id FROM memories WHERE status = 'active' AND meta LIKE ?",
-            (f'%"content_hash": "{content_hash}"%',),
+            "SELECT id FROM memories WHERE status = 'active' AND json_extract(meta, '$.content_hash') = ?",
+            (content_hash,),
         ).fetchone()
         return row[0] if row else None
