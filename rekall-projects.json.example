@@ -1,7 +1,0 @@
-{
-  "mappings": [
-    {"pattern": "my-app", "project": "My App"},
-    {"pattern": "portfolio", "project": "Portfolio"},
-    {"pattern": "blog", "project": "Blog"}
-  ]
-}
