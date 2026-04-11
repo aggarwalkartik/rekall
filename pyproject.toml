@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rekall"
+version = "3.0.0"
+description = "A personal AI memory layer — remember everything, recall by meaning"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "fastembed>=0.4.0",
+    "sqlite-vec>=0.1.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+rekall = "rekall.server:main"
+rekall-extract = "rekall.extractor:main"
+rekall-compile = "rekall.compiler:main"
+rekall-migrate = "rekall.migrate:main"
+rekall-sync = "rekall.sync:main"
+rekall-backup = "rekall.backup:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rekall"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
