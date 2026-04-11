@@ -32,10 +32,14 @@ def parse_session(jsonl_path: Path) -> list[dict]:
                 continue
 
             # Extract text from message content blocks
-            content_blocks = event.get("message", {}).get("content", [])
+            content = event.get("message", {}).get("content", [])
+            if isinstance(content, str):
+                content = [content]
             texts = []
-            for block in content_blocks:
-                if block.get("type") == "text":
+            for block in content:
+                if isinstance(block, str):
+                    texts.append(block)
+                elif isinstance(block, dict) and block.get("type") == "text":
                     texts.append(block["text"])
                 # Skip tool_use and tool_result blocks
             if texts:
