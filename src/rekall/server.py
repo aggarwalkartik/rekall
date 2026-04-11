@@ -1,5 +1,6 @@
 """Rekall MCP Server — personal AI memory layer."""
 from __future__ import annotations
+import asyncio
 import hashlib
 import json
 import math
@@ -42,9 +43,23 @@ def create_app() -> FastMCP:
                 file=sys.stderr,
             )
             embedder = None
+        # Background Cursor extraction
+        async def _extract_cursor():
+            try:
+                from rekall.extractor import extract_cursor_sessions
+                processed_log = config.data_dir / "sessions-processed.log"
+                count = extract_cursor_sessions(db, embedder, processed_log)
+                if count > 0:
+                    print(f"Background: extracted {count} Cursor conversation(s)", file=sys.stderr)
+            except Exception as e:
+                print(f"Background extraction failed: {e}", file=sys.stderr)
+
+        extraction_task = asyncio.create_task(asyncio.to_thread(_extract_cursor))
+
         try:
             yield AppContext(db=db, embedder=embedder)
         finally:
+            extraction_task.cancel()
             db.close()
 
     mcp = FastMCP(

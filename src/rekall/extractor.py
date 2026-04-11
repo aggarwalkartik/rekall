@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -139,11 +140,170 @@ def extract_sessions(
     return count
 
 
+def get_cursor_db_path() -> Path | None:
+    """Find Cursor's state.vscdb across platforms."""
+    system = platform.system()
+    if system == "Darwin":
+        p = Path.home() / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+    elif system == "Linux":
+        p = Path.home() / ".config/Cursor/User/globalStorage/state.vscdb"
+    elif system == "Windows":
+        p = Path(os.environ.get("APPDATA", "")) / "Cursor/User/globalStorage/state.vscdb"
+    else:
+        return None
+    return p if p.exists() else None
+
+
+def parse_cursor_chat(db_path: Path) -> list[dict]:
+    """Parse sidebar chat conversations from Cursor's state.vscdb."""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("workbench.panel.aichat.view.aichat.chatdata",)
+        ).fetchone()
+        if not row:
+            return []
+        data = json.loads(row[0])
+        conversations = []
+        for tab in data.get("tabs", []):
+            tab_id = tab.get("tabId", "unknown")
+            messages = []
+            for bubble in tab.get("bubbles", []):
+                role = "user" if bubble.get("type") == "user" else "assistant"
+                text = bubble.get("text", "")
+                if text:
+                    messages.append({"role": role, "text": text})
+            if messages:
+                conversations.append({
+                    "id": f"cursor_chat_{tab_id}",
+                    "title": tab.get("chatTitle", "Untitled"),
+                    "messages": messages,
+                    "timestamp": tab.get("lastSendTime"),
+                })
+        return conversations
+    finally:
+        conn.close()
+
+
+def parse_cursor_composer(db_path: Path) -> list[dict]:
+    """Parse composer/agent conversations from Cursor's state.vscdb."""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("composerData",)
+        ).fetchone()
+        if not row:
+            return []
+        data = json.loads(row[0])
+        conversations = []
+        for composer in data.get("allComposers", []):
+            comp_id = composer.get("composerId", "unknown")
+            messages = []
+            for msg in composer.get("conversation", []):
+                role = "user" if msg.get("type") == 1 else "assistant"
+                text = msg.get("text", "")
+                if text:
+                    messages.append({"role": role, "text": text})
+            if messages:
+                conversations.append({
+                    "id": f"cursor_comp_{comp_id}",
+                    "title": composer.get("name", "Untitled"),
+                    "messages": messages,
+                    "timestamp": composer.get("createdAt"),
+                })
+        return conversations
+    finally:
+        conn.close()
+
+
+def extract_cursor_sessions(
+    db: Storage,
+    embedder: Embedder | None,
+    processed_log: Path,
+) -> int:
+    """Extract unprocessed Cursor conversations into Rekall. Returns count."""
+    cursor_db = get_cursor_db_path()
+    if not cursor_db:
+        return 0
+
+    # Read already-processed IDs
+    processed_ids: set[str] = set()
+    if processed_log.exists():
+        processed_ids = set(processed_log.read_text().strip().split("\n"))
+
+    conversations = []
+    try:
+        conversations.extend(parse_cursor_chat(cursor_db))
+    except Exception as e:
+        print(f"Warning: Failed to parse Cursor chat: {e}", file=sys.stderr)
+    try:
+        conversations.extend(parse_cursor_composer(cursor_db))
+    except Exception as e:
+        print(f"Warning: Failed to parse Cursor composer: {e}", file=sys.stderr)
+
+    count = 0
+    for conv in conversations:
+        if conv["id"] in processed_ids:
+            continue
+
+        filtered = filter_messages(conv["messages"])
+        if len(filtered) < 3:
+            processed_ids.add(conv["id"])
+            continue
+
+        session_text = "\n\n".join(
+            f"[{m['role']}]: {m['text']}" for m in filtered
+        )
+
+        doc_id = db.next_document_id()
+        doc = Document(
+            id=doc_id,
+            title=f"Cursor: {conv['title'][:60]}",
+            content=session_text,
+            type="session",
+            source_path=str(cursor_db),
+            meta=json.dumps({"source": "cursor", "cursor_id": conv["id"]}),
+        )
+        text_chunks = chunk_text(session_text, prefix=f"type: session | source: cursor | title: {conv['title'][:40]}")
+        chunks = [
+            Chunk(
+                chunk_id=f"{doc_id}_chk_{i:03d}",
+                document_id=doc_id,
+                content=c,
+                chunk_index=i,
+            )
+            for i, c in enumerate(text_chunks)
+        ]
+        db.add_document(doc, chunks)
+
+        if embedder:
+            try:
+                vecs = embedder.embed_batch([c.content for c in chunks])
+                for chunk, vec in zip(chunks, vecs):
+                    db.add_chunk_vector(chunk.chunk_id, vec)
+            except Exception as e:
+                print(f"Warning: Failed to embed Cursor conversation {conv['id']}: {e}", file=sys.stderr)
+
+        processed_ids.add(conv["id"])
+        count += 1
+
+    # Write processed log
+    processed_log.parent.mkdir(parents=True, exist_ok=True)
+    processed_log.write_text("\n".join(sorted(processed_ids)))
+
+    return count
+
+
 def main():
     """Entry point for rekall-extract. Use --background to run in background."""
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--background", action="store_true")
+    parser.add_argument("--cursor", action="store_true", help="Extract Cursor conversations")
     args = parser.parse_args()
 
     if args.background:
@@ -175,20 +335,25 @@ def main():
     except Exception:
         embedder = None
 
-    # Find all session directories
-    claude_projects = Path.home() / ".claude" / "projects"
-    session_dirs = []
-    if claude_projects.exists():
-        for project_dir in claude_projects.iterdir():
-            if project_dir.is_dir() and not project_dir.name.startswith("."):
-                session_dirs.append(project_dir)
-
     processed_log = config.data_dir / "sessions-processed.log"
 
     try:
-        count = extract_sessions(session_dirs, db, embedder, processed_log)
-        if count > 0:
-            print(f"Extracted {count} new session(s)", file=sys.stderr)
+        # Claude Code extraction (skip when --cursor only is implied, but always run unless explicitly skipping)
+        if not args.cursor:
+            claude_projects = Path.home() / ".claude" / "projects"
+            session_dirs = []
+            if claude_projects.exists():
+                for project_dir in claude_projects.iterdir():
+                    if project_dir.is_dir() and not project_dir.name.startswith("."):
+                        session_dirs.append(project_dir)
+            count = extract_sessions(session_dirs, db, embedder, processed_log)
+            if count > 0:
+                print(f"Extracted {count} new Claude Code session(s)", file=sys.stderr)
+
+        # Cursor extraction — always runs (--cursor flag is additive, not exclusive)
+        cursor_count = extract_cursor_sessions(db, embedder, processed_log)
+        if cursor_count > 0:
+            print(f"Extracted {cursor_count} new Cursor conversation(s)", file=sys.stderr)
     finally:
         db.close()
 
