@@ -1,114 +1,136 @@
 # Rekall
 
-**A second brain that builds itself.**
+**Personal AI memory layer — not a note-taking tool.**
 
-Rekall turns your Claude Code conversation history into a structured Obsidian knowledge base — automatically. No manual logging, no copy-paste, no plugins. Every session you've ever had becomes searchable, linked knowledge.
+Rekall gives Claude persistent memory across sessions using SQLite + vector embeddings. Every conversation can recall what you've told it before, without repeating yourself. It runs as an MCP server.
 
-## What's New in v2
-
-**Vault Researcher** — A PreToolUse hook intercepts every web search and checks your vault first. It searches filenames then falls back to frontmatter summaries, injecting up to 5 matches as `additionalContext` before the search runs. You get relevant local knowledge before Claude reaches for the web.
-
-**Exponential Decay** — Confidence now decays as `effective = confidence × e^(-days / (60 × √evidence_count))`. The more times a pattern has been confirmed, the slower it fades. A pattern seen once decays at the base rate; one seen 9 times decays at a third of that rate. The old flat -0.05/30d rule is gone.
-
-**Contradiction Detection** — When adding or updating an instinct, the compiler checks for conflicts using Jaccard similarity plus polarity-flip detection (e.g., "prefers X" vs "avoids X"). Conflicts surface as `[!conflict]` callouts in MEMORY.md so you can resolve them during the next instincts review.
+---
 
 ## What it does
 
-Rekall works in three layers.
+- **Remember** — store facts, preferences, and decisions as searchable memories
+- **Recall** — hybrid search (keyword + semantic) surfaces relevant context before you ask
+- **Compile** — generates `MEMORY.md` injected at session start, so Claude already knows your instincts
+- **Extract** — mines past Claude Code sessions and stores them as documents
+- **Migrate** — imports your v2 `instincts.jsonl` and Obsidian vault notes into v3 SQLite
 
-**Bootstrap** — Run setup once. Rekall mines your entire Claude Code history and creates notes for decisions, learnings, ideas, and a profile of who you are.
-
-**Autopilot** — Every time you start Claude Code, new sessions are logged automatically. Your vault grows as you work. Zero manual steps.
-
-**Intelligence** — Slash commands for deeper work. Vault health audits find broken links and orphaned knowledge. Synthesis turns scattered research into coherent frameworks. A memory system tracks your preferences and decays stale ones.
+---
 
 ## Quick start
 
 ```bash
-git clone https://github.com/aggarwalkartik/rekall
-cd rekall
-bash setup.sh          # Unix/Mac
-# or
-.\setup.ps1            # Windows
+# Run directly with uvx (no install)
+uvx rekall
+
+# Or with uv in a cloned repo
+uv run rekall
 ```
 
-**Requirements**: Python 3, Node.js (optional, for Obsidian MCP server).
+Rekall stores everything under `~/.rekall/` by default:
+- `~/.rekall/rekall.db` — SQLite database (memories + documents + vectors)
+- `~/.rekall/backups/` — hot backups
 
-Then start a new Claude Code session. That's it.
+---
 
-## What you get
+## MCP configuration
 
-Setup creates a vault structure designed for long-term knowledge accumulation.
+Add Rekall as an MCP server so Claude can call `remember`, `recall`, `forget`, and `list`.
 
-| Folder / File | Purpose |
-|---|---|
-| `Projects/` | One hub per project. Links to its research and decisions. |
-| `Research/` | Findings, how-tos, API docs, comparisons. |
-| `Decisions/` | Choices made with context and consequences. |
-| `Ideas/` | Sparks and rough thoughts. |
-| `Sessions/` | Auto-generated daily logs from Claude Code conversations. |
-| `AGENDA.md` | Session handoff context, auto-updated. |
-| `About {You}.md` | Your profile, built from conversation patterns. |
+### Claude Code (`~/.claude/settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "rekall": {
+      "command": "uvx",
+      "args": ["rekall"]
+    }
+  }
+}
+```
+
+### Cursor (`~/.cursor/mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "rekall": {
+      "command": "uvx",
+      "args": ["rekall"]
+    }
+  }
+}
+```
+
+### Windsurf (`~/.codeium/windsurf/mcp_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "rekall": {
+      "command": "uvx",
+      "args": ["rekall"]
+    }
+  }
+}
+```
+
+---
+
+## Migration from v2
+
+If you were using Rekall v2 (vault + `instincts.jsonl`), migrate your data to v3 SQLite in one command:
+
+```bash
+rekall-migrate --instincts ~/.claude/projects/.../memory/instincts.jsonl --vault ~/path/to/vault
+```
+
+Both flags are optional — run with just `--instincts` if you don't want to import vault notes, or just `--vault` to skip instincts.
+
+---
 
 ## How it works
 
-1. Setup copies hooks, commands, and a vault template to your system.
-2. On first session, `session-logger.py` discovers all past sessions and creates skeleton notes.
-3. Claude reads "pending extractions" in context and dispatches a background agent to fill in details.
-4. Every subsequent session is auto-logged on next startup.
-5. A vault linter catches formatting issues in real-time.
-6. Safety hooks block accidental secret leaks and destructive commands.
+```
+Claude ──MCP──► rekall recall "X"
+                    │
+                    ├─ FTS5 keyword search  ─┐
+                    └─ Vector similarity     ─┴─► hybrid rank ──► top-N results
+                    
+rekall-compile ──► reads memories from SQLite ──► writes MEMORY.md
+rekall-extract ──► reads ~/.claude session JSONLs ──► stores as documents
+```
 
-## Commands
+**Storage**: SQLite with two virtual tables — `memories_fts` (FTS5) for keyword search and `vec_memories`/`vec_chunks` (sqlite-vec) for semantic search. Hybrid results are re-ranked by RRF (Reciprocal Rank Fusion).
+
+**Embeddings**: `all-MiniLM-L6-v2` via `sentence-transformers`. 384-dimensional vectors. Runs locally, no API key required.
+
+**MEMORY.md compilation**: Active instincts grouped by section, filtered by effective confidence (exponential decay). Conflicts surface as `[!conflict]` callouts for review.
+
+**Session extraction**: Reads raw Claude Code session JSONL files, chunks conversations, embeds and stores them as searchable documents.
+
+---
+
+## Entry points
 
 | Command | What it does |
 |---|---|
-| `/session-log` | Manually capture the current session (auto-logging handles past sessions) |
-| `/vault-health` | Audit vault: orphans, broken links, stale notes, health score out of 100 |
-| `/vault-consolidate {project}` | Synthesize all research for a project into one framework note |
-| `/instincts-review` | Review your memory system — confirm, dismiss, or adjust learned patterns |
+| `rekall` | Start the MCP server |
+| `rekall-extract` | Extract past Claude Code sessions into the database |
+| `rekall-compile` | Compile `MEMORY.md` from active instincts |
+| `rekall-migrate` | Import v2 instincts.jsonl and/or Obsidian vault notes |
+| `rekall-backup` | Hot backup the database (`sqlite3.backup()`) |
+| `rekall-sync` | Sync memories to/from a remote store (planned) |
 
-## Hooks
+---
 
-| Hook | Type | What it does |
-|---|---|---|
-| `session-logger.py` | SessionStart | Auto-logs unprocessed sessions as vault notes |
-| `compile-memory.sh` | SessionStart | Compiles preferences + agenda into session context |
-| `vault-researcher.py` | PreToolUse | Checks vault for relevant notes before web searches |
-| `secrets-check.sh` | PreToolUse | Blocks writes containing API keys or credentials |
-| `dangerous-cmd-check.sh` | PreToolUse | Blocks destructive shell commands (`rm -rf`, force push) |
-| `post-write.sh` | PostToolUse | Vault linting + file size warnings (single hook, no Python spawn) |
+## What carries over from v2
 
-## Customization
+- **Confidence decay** — `effective = confidence × e^(-days / (60 × √evidence_count))`. Patterns seen once fade fast; patterns confirmed 9+ times decay at a third of the base rate.
+- **Contradiction detection** — Jaccard similarity + polarity-flip detection flags conflicting instincts (e.g. "prefers X" vs "avoids X") as `[!conflict]` callouts in `MEMORY.md`.
+- **Safety hooks** — secrets check and dangerous command check still ship as Claude Code hooks.
 
-**Domain tags** — Edit the allowed tags list in your `~/.claude/CLAUDE.md`.
-
-**Project mappings** — Edit `~/.claude/rekall-projects.json` to map directories to project names.
-
-**Note templates** — Modify the templates in `CLAUDE.md` to match your style.
-
-**Commands** — All commands are markdown files in `~/.claude/commands/`. Edit freely.
-
-## Existing vaults
-
-Rekall is safe for existing Obsidian vaults. Setup creates folders only if they don't exist, appends to `CLAUDE.md` (never overwrites), and merges into `settings.json`. Your existing notes, plugins, and configuration are untouched.
-
-## FAQ
-
-**Does it send data anywhere?**
-No. Everything stays on your machine. Rekall is just files — hooks, commands, and markdown.
-
-**Does it need an API key?**
-No. It runs inside Claude Code, which handles authentication.
-
-**Does it work with existing vaults?**
-Yes. Setup skips existing folders and files.
-
-**What if I stop using it?**
-Your vault is plain markdown. It works with or without Rekall, Claude Code, or Obsidian.
-
-**What Claude Code plan do I need?**
-Any plan that supports Claude Code (Pro, Max, or Team).
+---
 
 ## License
 
