@@ -466,6 +466,22 @@ class Storage:
 
         return results
 
+    def update_document_meta(self, doc_id: str, meta: str) -> None:
+        now = datetime.now().isoformat()
+        self.conn.execute(
+            "UPDATE documents SET meta = ?, updated_at = ? WHERE id = ?",
+            (meta, now, doc_id),
+        )
+        self.conn.commit()
+
+    def update_memory_meta(self, memory_id: str, meta: str) -> None:
+        now = datetime.now().isoformat()
+        self.conn.execute(
+            "UPDATE memories SET meta = ?, updated_at = ? WHERE id = ?",
+            (meta, now, memory_id),
+        )
+        self.conn.commit()
+
     def memory_content_hash_exists(self, content_hash: str) -> str | None:
         """Check if a memory with this content hash exists. Returns memory ID or None."""
         row = self.conn.execute(
