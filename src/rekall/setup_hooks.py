@@ -1,6 +1,7 @@
 """Post-install setup for Claude Code integration."""
 from __future__ import annotations
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -78,6 +79,61 @@ def setup_claude_code() -> None:
     else:
         claude_md.write_text(CLAUDE_MD_SNIPPET.strip())
         print(f"Created {claude_md}", file=sys.stderr)
+
+
+    # --- Copy safety hooks ---
+    hooks_src = Path(__file__).resolve().parent.parent.parent / "hooks"
+    hooks_dst = claude_dir / "hooks"
+    hooks_dst.mkdir(parents=True, exist_ok=True)
+
+    for hook_name in ["secrets-check.sh", "dangerous-cmd-check.sh"]:
+        src = hooks_src / hook_name
+        dst = hooks_dst / hook_name
+        if src.exists():
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            print(f"Installed {dst}", file=sys.stderr)
+        else:
+            print(f"Warning: {src} not found, skipping", file=sys.stderr)
+
+    # --- Add safety hook configs to settings ---
+    # Re-read settings (we already wrote SessionStart above)
+    settings = json.loads(settings_path.read_text())
+    settings["hooks"].setdefault("PreToolUse", [])
+
+    # Remove old Rekall PreToolUse hooks, keep non-Rekall ones
+    existing_pre = settings["hooks"]["PreToolUse"]
+    settings["hooks"]["PreToolUse"] = [
+        h for h in existing_pre
+        if not any(
+            "secrets-check" in hook.get("command", "").lower()
+            or "dangerous-cmd" in hook.get("command", "").lower()
+            for hook in h.get("hooks", [])
+        )
+    ]
+
+    # Add secrets check on Write/Edit
+    settings["hooks"]["PreToolUse"].append({
+        "matcher": "Write|Edit",
+        "hooks": [{
+            "type": "command",
+            "command": f"bash {hooks_dst / 'secrets-check.sh'}",
+            "timeout": 10,
+        }],
+    })
+
+    # Add dangerous command check on Bash
+    settings["hooks"]["PreToolUse"].append({
+        "matcher": "Bash",
+        "hooks": [{
+            "type": "command",
+            "command": f"bash {hooks_dst / 'dangerous-cmd-check.sh'}",
+            "timeout": 10,
+        }],
+    })
+
+    settings_path.write_text(json.dumps(settings, indent=2))
+    print(f"Added safety hooks to {settings_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
