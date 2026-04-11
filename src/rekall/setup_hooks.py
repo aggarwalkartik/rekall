@@ -27,9 +27,12 @@ def setup_claude_code() -> None:
     if mcp_path.exists():
         mcp_config = json.loads(mcp_path.read_text())
     mcp_config.setdefault("mcpServers", {})
+    # Use local path until published to PyPI under a unique name
+    # (the "rekall" name on PyPI is taken by a memory forensics tool)
+    rekall_dir = str(Path(__file__).resolve().parent.parent.parent)
     mcp_config["mcpServers"]["rekall"] = {
-        "command": "uvx",
-        "args": ["rekall"],
+        "command": "uv",
+        "args": ["run", "--directory", rekall_dir, "rekall"],
     }
     mcp_path.write_text(json.dumps(mcp_config, indent=2))
     print(f"Updated {mcp_path}", file=sys.stderr)
