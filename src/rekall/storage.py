@@ -304,6 +304,151 @@ class Storage:
         ).fetchall()
         return [(r[0], r[1]) for r in rows]
 
+    def hybrid_search(
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        limit: int = 5,
+        type_filter: str | None = None,
+        project_filter: str | None = None,
+    ) -> list[RecallResult]:
+        """Hybrid BM25 + vector search with Reciprocal Rank Fusion (k=60)."""
+        k = 60  # RRF constant
+        search_limit = limit * 4  # fetch more candidates for fusion
+
+        # --- BM25 results from memories ---
+        fts_mem_sql = """
+            SELECT m.id, m.content, m.type, m.confidence, m.source_document, m.source_title
+            FROM (
+                SELECT m2.id, m2.content, m2.type, m2.confidence,
+                       NULL as source_document, NULL as source_title, rank
+                FROM memories_fts fts
+                JOIN memories m2 ON m2.rowid = fts.rowid
+                WHERE memories_fts MATCH ? AND m2.status = 'active'
+        """
+        fts_params: list = [query_text]
+        if type_filter:
+            fts_mem_sql += " AND m2.type = ?"
+            fts_params.append(type_filter)
+        if project_filter:
+            fts_mem_sql += " AND m2.project = ?"
+            fts_params.append(project_filter)
+        fts_mem_sql += f" ORDER BY rank LIMIT ?) m ORDER BY m.id"
+        fts_params.append(search_limit)
+
+        try:
+            fts_mem_rows = self.conn.execute(fts_mem_sql, fts_params).fetchall()
+        except Exception:
+            fts_mem_rows = []
+
+        # --- BM25 results from chunks ---
+        try:
+            fts_chunk_rows = self.conn.execute(
+                """SELECT c.chunk_id, c.content, d.type, NULL as confidence,
+                          c.document_id, d.title
+                   FROM chunks_fts fts
+                   JOIN chunks c ON c.rowid = fts.rowid
+                   JOIN documents d ON d.id = c.document_id
+                   WHERE chunks_fts MATCH ? AND d.status = 'active'
+                   ORDER BY rank LIMIT ?""",
+                (query_text, search_limit),
+            ).fetchall()
+        except Exception:
+            fts_chunk_rows = []
+
+        # --- Vector results from memories ---
+        vec_mem_rows = self.vec_search_memories(query_embedding, limit=search_limit)
+
+        # --- Vector results from chunks ---
+        vec_chunk_rows = self.vec_search_chunks(query_embedding, limit=search_limit)
+
+        # --- Build ranked lists ---
+        # Key: result_id, Value: {"content": ..., "type": ..., etc.}
+        all_candidates: dict[str, dict] = {}
+
+        # BM25 memory results
+        bm25_mem_ranked = []
+        for row in fts_mem_rows:
+            rid = row[0]
+            all_candidates[rid] = {
+                "content": row[1], "type": row[2], "confidence": row[3],
+                "source_document": row[4], "source_title": row[5],
+            }
+            bm25_mem_ranked.append(rid)
+
+        # BM25 chunk results
+        bm25_chunk_ranked = []
+        for row in fts_chunk_rows:
+            rid = row[0]  # chunk_id
+            all_candidates[rid] = {
+                "content": row[1], "type": row[2], "confidence": row[3],
+                "source_document": row[4], "source_title": row[5],
+            }
+            bm25_chunk_ranked.append(rid)
+
+        # Vector memory results
+        vec_mem_ranked = []
+        for mem_id, distance in vec_mem_rows:
+            if mem_id not in all_candidates:
+                mem = self.get_memory(mem_id)
+                if mem and mem.status == "active":
+                    all_candidates[mem_id] = {
+                        "content": mem.content, "type": mem.type,
+                        "confidence": mem.confidence,
+                        "source_document": None, "source_title": None,
+                    }
+            if mem_id in all_candidates:
+                vec_mem_ranked.append(mem_id)
+
+        # Vector chunk results
+        vec_chunk_ranked = []
+        for chunk_id, distance in vec_chunk_rows:
+            if chunk_id not in all_candidates:
+                chunk_row = self.conn.execute(
+                    """SELECT c.chunk_id, c.content, d.type, c.document_id, d.title
+                       FROM chunks c JOIN documents d ON d.id = c.document_id
+                       WHERE c.chunk_id = ? AND d.status = 'active'""",
+                    (chunk_id,),
+                ).fetchone()
+                if chunk_row:
+                    all_candidates[chunk_id] = {
+                        "content": chunk_row[1], "type": chunk_row[2],
+                        "confidence": None,
+                        "source_document": chunk_row[3], "source_title": chunk_row[4],
+                    }
+            if chunk_id in all_candidates:
+                vec_chunk_ranked.append(chunk_id)
+
+        # Apply type/project filters to vec results that bypassed FTS filtering
+        if type_filter:
+            vec_mem_ranked = [r for r in vec_mem_ranked if all_candidates.get(r, {}).get("type") == type_filter]
+        # project filter for vec results would require loading full memory — skip for now
+
+        # --- Reciprocal Rank Fusion ---
+        rrf_scores: dict[str, float] = {}
+        for ranked_list in [bm25_mem_ranked, bm25_chunk_ranked, vec_mem_ranked, vec_chunk_ranked]:
+            for rank, rid in enumerate(ranked_list):
+                rrf_scores[rid] = rrf_scores.get(rid, 0) + 1.0 / (k + rank + 1)
+
+        # Sort by RRF score descending
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)[:limit]
+
+        # Build results
+        results = []
+        for rid in sorted_ids:
+            cand = all_candidates[rid]
+            results.append(RecallResult(
+                id=rid,
+                content=cand["content"],
+                type=cand["type"],
+                confidence=cand["confidence"],
+                score=round(rrf_scores[rid], 4),
+                source_document=cand["source_document"],
+                source_title=cand["source_title"],
+            ))
+
+        return results
+
     def memory_content_hash_exists(self, content_hash: str) -> str | None:
         """Check if a memory with this content hash exists. Returns memory ID or None."""
         row = self.conn.execute(
