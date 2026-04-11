@@ -310,12 +310,15 @@ def main():
         # Fork to background
         if os.name == "nt":
             # Windows: use subprocess
+            log_dir = Path.home() / ".rekall"
+            log_dir.mkdir(parents=True, exist_ok=True)
             subprocess.Popen(
                 [sys.executable, "-m", "rekall.extractor"],
                 creationflags=subprocess.DETACHED_PROCESS,
                 stdout=subprocess.DEVNULL,
-                stderr=open(Path.home() / ".rekall" / "extract.log", "a"),
+                stderr=open(log_dir / "extract.log", "a"),
             )
+            return  # Parent exits, child runs independently
         else:
             # Unix: fork
             pid = os.fork()

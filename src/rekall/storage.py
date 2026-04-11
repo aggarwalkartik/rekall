@@ -1,10 +1,19 @@
 """SQLite storage layer with FTS5 and sqlite-vec support."""
 from __future__ import annotations
+import re
 import sqlite3
 import sqlite_vec
 from datetime import datetime
 from pathlib import Path
 from rekall.schemas import Memory, Document, Chunk, RecallResult
+
+
+def sanitize_fts_query(query: str) -> str:
+    """Quote each word to prevent FTS5 syntax errors from special characters."""
+    words = re.findall(r'\w+', query)
+    if not words:
+        return '""'
+    return " ".join(f'"{w}"' for w in words)
 
 SCHEMA_VERSION = 1
 
@@ -202,12 +211,11 @@ class Storage:
 
     def next_memory_id(self) -> str:
         row = self.conn.execute(
-            "SELECT id FROM memories ORDER BY rowid DESC LIMIT 1"
+            "SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) FROM memories WHERE id LIKE 'mem_%'"
         ).fetchone()
-        if not row:
+        if not row or row[0] is None:
             return "mem_001"
-        num = int(row[0].split("_")[1]) + 1
-        return f"mem_{num:03d}"
+        return f"mem_{row[0] + 1:03d}"
 
     # --- Document CRUD ---
 
@@ -257,31 +265,32 @@ class Storage:
 
     def next_document_id(self) -> str:
         row = self.conn.execute(
-            "SELECT id FROM documents ORDER BY rowid DESC LIMIT 1"
+            "SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) FROM documents WHERE id LIKE 'doc_%'"
         ).fetchone()
-        if not row:
+        if not row or row[0] is None:
             return "doc_001"
-        num = int(row[0].split("_")[1]) + 1
-        return f"doc_{num:03d}"
+        return f"doc_{row[0] + 1:03d}"
 
     # --- FTS Search ---
 
     def fts_search_memories(self, query: str, limit: int = 20) -> list[Memory]:
+        safe_query = sanitize_fts_query(query)
         rows = self.conn.execute(
             """SELECT m.* FROM memories_fts fts
                JOIN memories m ON m.rowid = fts.rowid
                WHERE memories_fts MATCH ? AND m.status = 'active'
                ORDER BY rank LIMIT ?""",
-            (query, limit),
+            (safe_query, limit),
         ).fetchall()
         return [Memory(**dict(r)) for r in rows]
 
     def fts_search_chunks(self, query: str, limit: int = 20) -> list[Chunk]:
+        safe_query = sanitize_fts_query(query)
         rows = self.conn.execute(
             """SELECT c.* FROM chunks_fts fts
                JOIN chunks c ON c.rowid = fts.rowid
                WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?""",
-            (query, limit),
+            (safe_query, limit),
         ).fetchall()
         return [Chunk(**dict(r)) for r in rows]
 
@@ -332,6 +341,7 @@ class Storage:
         """Hybrid BM25 + vector search with Reciprocal Rank Fusion (k=60)."""
         k = 60  # RRF constant
         search_limit = limit * 4  # fetch more candidates for fusion
+        safe_query = sanitize_fts_query(query_text)
 
         # --- BM25 results from memories ---
         fts_mem_sql = """
@@ -343,7 +353,7 @@ class Storage:
                 JOIN memories m2 ON m2.rowid = fts.rowid
                 WHERE memories_fts MATCH ? AND m2.status = 'active'
         """
-        fts_params: list = [query_text]
+        fts_params: list = [safe_query]
         if type_filter:
             fts_mem_sql += " AND m2.type = ?"
             fts_params.append(type_filter)
@@ -368,7 +378,7 @@ class Storage:
                    JOIN documents d ON d.id = c.document_id
                    WHERE chunks_fts MATCH ? AND d.status = 'active'
                    ORDER BY rank LIMIT ?""",
-                (query_text, search_limit),
+                (safe_query, search_limit),
             ).fetchall()
         except Exception:
             fts_chunk_rows = []

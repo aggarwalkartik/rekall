@@ -50,6 +50,8 @@ def import_instincts(
                 last_seen_at=inst.get("last_seen", ""),
                 meta=json.dumps({"section": inst.get("section"), "imported_from": "instincts.jsonl"}),
             )
+            if db.get_memory(inst["id"]):
+                continue  # Skip already-imported instincts
             db.add_memory(mem)
             if embedder:
                 try:

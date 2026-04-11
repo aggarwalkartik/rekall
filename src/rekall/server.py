@@ -43,18 +43,24 @@ def create_app() -> FastMCP:
                 file=sys.stderr,
             )
             embedder = None
-        # Background Cursor extraction
-        async def _extract_cursor():
+        # Background Cursor extraction — uses its own Storage instance
+        # because sqlite3 connections can't cross threads by default
+        def _extract_cursor_sync():
             try:
                 from rekall.extractor import extract_cursor_sessions
-                processed_log = config.data_dir / "sessions-processed.log"
-                count = extract_cursor_sessions(db, embedder, processed_log)
-                if count > 0:
-                    print(f"Background: extracted {count} Cursor conversation(s)", file=sys.stderr)
+                bg_db = Storage(config.db_path)
+                bg_db.initialize()
+                try:
+                    processed_log = config.data_dir / "sessions-processed.log"
+                    count = extract_cursor_sessions(bg_db, embedder, processed_log)
+                    if count > 0:
+                        print(f"Background: extracted {count} Cursor conversation(s)", file=sys.stderr)
+                finally:
+                    bg_db.close()
             except Exception as e:
                 print(f"Background extraction failed: {e}", file=sys.stderr)
 
-        extraction_task = asyncio.create_task(asyncio.to_thread(_extract_cursor))
+        extraction_task = asyncio.create_task(asyncio.to_thread(_extract_cursor_sync))
 
         try:
             yield AppContext(db=db, embedder=embedder)

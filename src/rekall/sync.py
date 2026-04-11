@@ -1,7 +1,8 @@
-"""One-way sync: SQLite → Obsidian vault."""
+"""One-way sync: SQLite -> Obsidian vault."""
 from __future__ import annotations
 import hashlib
 import json
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -41,6 +42,16 @@ def to_title_case(s: str) -> str:
     return " ".join(w.upper() if w.upper() in ACRONYMS else w for w in words)
 
 
+def sanitize_filename(s: str) -> str:
+    """Remove filesystem-invalid characters from a string."""
+    return re.sub(r'[/\\:*?"<>|]', '-', s).strip('-').strip()
+
+
+def escape_yaml_string(s: str) -> str:
+    """Escape a string for use in YAML double-quoted values."""
+    return s.replace('\\', '\\\\').replace('"', '\\"')
+
+
 def content_hash(text: str) -> str:
     """Hash content for change detection."""
     return hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -64,7 +75,7 @@ def document_to_markdown(doc: Document) -> str:
 date: {doc.created_at[:10] if doc.created_at else now}
 tags: [{tag}]
 status: {doc.status}
-summary: "{doc.title}"
+summary: "{escape_yaml_string(doc.title)}"
 source: rekall-sync
 ---
 
@@ -90,7 +101,7 @@ def sync_to_vault(db: Storage, vault_path: Path) -> int:
             if meta.get("synced_to_vault") and meta.get("sync_hash") == current_hash:
                 continue
 
-            title = to_title_case(doc.title)
+            title = sanitize_filename(to_title_case(doc.title))
             file_path = folder_path / f"{title}.md"
 
             md = document_to_markdown(doc)
