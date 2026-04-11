@@ -8,11 +8,11 @@ Rekall gives your AI tools persistent memory across sessions. It extracts knowle
 
 ## What it does
 
-- **Recall** — hybrid search (keyword + semantic) finds relevant knowledge before you even ask
-- **Remember** — store facts, preferences, and decisions with automatic deduplication
-- **Extract** — automatically mines past conversations from Claude Code and Cursor
-- **Compile** — generates `MEMORY.md` injected at session start with your preferences and instincts
-- **Sync** — optionally exports memories to an Obsidian vault as human-readable notes
+- **Recall** - hybrid search (keyword + semantic) finds relevant knowledge before you even ask
+- **Remember** - store facts, preferences, and decisions with automatic deduplication
+- **Extract** - automatically mines past conversations from Claude Code and Cursor
+- **Compile** - generates `MEMORY.md` injected at session start with your preferences and instincts
+- **Sync** - optionally exports memories to an Obsidian vault as human-readable notes
 
 ---
 
@@ -87,7 +87,7 @@ When the MCP server starts (which happens when you open a project in Cursor), it
 
 ### What gets extracted
 
-Conversations are stored verbatim — no LLM summarization. The embedding layer makes them searchable by meaning. Short messages, tool outputs, and system messages are filtered as noise.
+Conversations are stored verbatim - no LLM summarization. The embedding layer makes them searchable by meaning. Short messages, tool outputs, and system messages are filtered as noise.
 
 ---
 
@@ -140,9 +140,9 @@ rekall-extract ──► Claude Code JSONL + Cursor .vscdb ──► embedded do
 
 ## What carries over from v2
 
-- **Confidence decay** — `effective = confidence × e^(-days / (60 × √evidence_count))`. Single observations fade fast. Well-confirmed patterns persist.
-- **Contradiction detection** — Jaccard similarity + polarity-flip detection flags conflicting instincts in `MEMORY.md`.
-- **Safety hooks** — secrets check and dangerous command check ship as Claude Code hooks.
+- **Confidence decay** - `effective = confidence × e^(-days / (60 × √evidence_count))`. Single observations fade fast. Well-confirmed patterns persist.
+- **Contradiction detection** - Jaccard similarity + polarity-flip detection flags conflicting instincts in `MEMORY.md`.
+- **Safety hooks** - secrets check and dangerous command check ship as Claude Code hooks.
 
 ---
 
